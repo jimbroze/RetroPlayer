@@ -1,4 +1,5 @@
 
+#include <string>
 #include <ArduinoJson.h>
 #include "SleepyPi2.h"
 
@@ -13,9 +14,15 @@ byte inputs[] = {4, 5, 6, 7, 8, 9};
 #define NUMINPUTS sizeof(inputs)
 byte inputState[NUMINPUTS];
 
-byte arduinoState = 100;
-byte piState = 0;
-byte displayState = 0;
+char* serialKeys[] = {
+    "display",
+    ""
+};
+byte SERIAL_ARRAY_SIZE = sizeof(serialKeys);
+
+byte arduinoState = 50;
+byte piState = 50;
+byte displayOn = 0;
 byte piAwake = 0;
 
 void doAction0 (byte level) {
@@ -57,7 +64,7 @@ void read_serial_data() {
     // read the incoming byte:
     int inData = Serial.read();
 
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<256> doc;
     DeserializationError error = deserializeJson(doc, inData);
     if (error) {
         Serial.println(error.c_str()); 
@@ -74,13 +81,35 @@ void read_serial_data() {
     // TODO Set pi state
 }
 
+void send_serial_value(string key, byte value) {
+    const int capacity=JSON_OBJECT_SIZE(1);
+    StaticJsonDocument<capacity> doc;
+    string output;
+    
+    doc[key] = value;
+    // Produce a minified JSON document
+    serializeJson(doc, output);
+    serial.print(output);
+}
+
+void send_serial_dict(byte data[]) {
+    const int capacity=JSON_OBJECT_SIZE(SERIAL_ARRAY_SIZE);
+    StaticJsonDocument<capacity> doc;
+    string output;
+
+    for (byte i = 0; i < SERIAL_ARRAY_SIZE; i++)
+        doc[serialKeys[i]] = data[i];
+    // Produce a minified JSON document
+    serializeJson(doc, output);
+    serial.print(output);
+}
+
 void check_inputs() {
     static byte newInputState[NUMINPUTS];
     static byte debounce[NUMINPUTS];
     static long lastTime[NUMINPUTS];
-    byte i;
   
-    for (i = 0; i < NUMINPUTS; i++) {
+    for (byte i = 0; i < NUMINPUTS; i++) {
         if (millis() < lastTime[i]) {
             lastTime[i] = millis(); // Timer has wrapped around
         }
@@ -154,13 +183,15 @@ void pi_controller() {
             if ( (lastHandshakeTime + HANDSHAKE_TIMEOUT) > millis() ) {
                 piState = 160;
                 // Send pi handshake data
-                // TODO Send pi data
+                // TODO Send pi data as struct?
             }
 
     }
 }
 
-void arduino_power() {
+
+
+void arduino_controller() {
     static long onTime;
 
     switch(arduinoState) { // State machine to control arduino power
@@ -191,9 +222,14 @@ void arduino_power() {
                 piState = 10; // Shutdown Pi
                 arduinoState = 10; // Shutdown arduino
             }
-        case 120: // Woken up, display is on
-            // TODO Send display state to pi
-
+            // TODO If inputs tripped, turn display on
+        case 120: // Woken up, display should be on
+            displayOn = 1
+            if (piState > 120) { // Initial data already sent. Send display on seperate
+                send_serial_value("display", 1)
+            }
+            arduinoState = 130;
+        case 150: // Standard awake state
     }
 }
 
@@ -216,7 +252,7 @@ void setup() {
 }
 
 void loop() {
-    arduino_power() // State machine to handle arduino power
+    arduino_controller() // State machine to handle arduino power
     pi_controller() // State machine to handle pi power and handshaking
     if (arduinoState > 100) { // If arduino is on, read inputs
         check_inputs();
