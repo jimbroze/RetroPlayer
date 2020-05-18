@@ -28,6 +28,7 @@ import time
 import dbus
 import dbus.service
 import dbus.mainloop.glib
+import signal
 
 import logging
 import traceback
@@ -39,8 +40,11 @@ from BlueHandler import BlueHandler
 from playerio import PlayerIO, MultiplexInput, SleepyPi
 
 # Multiplexer pins
-multiInPins = [16, 19, 20]
-multiOutPins = [12, 13]
+multiInPins = [24, 25, 7]
+multiOutPins = [17, 27]
+
+inPins = [18, 23]  # And 23
+outPins = [21]
 
 SERVICE_NAME = "org.bluez"
 AGENT_IFACE = SERVICE_NAME + ".Agent1"
@@ -89,8 +93,15 @@ class MediaPlayer(dbus.service.Object):
         bus = dbus.SystemBus()
 
         self.blueHandler = BlueHandler(bus, self, "NoInputNoOutput")
-        self.playerio = PlayerIO(self, inPins, ["hi"], outPins, [1])
+        self.playerio = PlayerIO(self, inPins, [None, None], outPins, [0])
         self.arduino = SleepyPi()
+
+        # Add signal handler to exit on keyoard press
+        for signame in ("SIGINT", "SIGTERM"):
+            self.mainLoop.add_signal_handler(
+                getattr(signal, signame),
+                lambda: asyncio.ensure_future(self.shutdown(signame)),
+            )
 
     def addMultiplexer(self, multiInPins, multiOutPins, multiFuncs):
         self.multiplexers.append(
@@ -104,7 +115,7 @@ class MediaPlayer(dbus.service.Object):
         """Start the player by beginning GPIO and the gobject/asyncio mainloop()"""
         self.playerio.setup()
         for multiplexer in self.multiplexers:
-            multiplexer.setup()
+            self.mainLoop.create_task(multiplexer.setup())
         self.mainLoop.create_task(self.arduino.setup())
         self.mainLoop.run_forever()
 
@@ -167,13 +178,13 @@ class MediaPlayer(dbus.service.Object):
     def num_but(self, number):
         """ """
 
-    def shutdown(self):
-        logging.info("Shutting down MediaPlayer")
+    def shutdown(self, sigName):
+        logging.info(f"Shutting down MediaPlayer. {sigName} was signalled")
         # self.lcd.end()
-        if self.mainLoop:
-            self.mainLoop.stop()
+        self.mainLoop.stop()
+        self.mainLoop.close()
 
-    def getStatus(self):
+    async def getStatus(self):
         return self.status
 
 
@@ -197,8 +208,6 @@ logging.basicConfig(filename=LOG_FILE, format=LOG_FORMAT, level=LOG_LEVEL)
 logging.info("Starting MediaPlayer")
 
 # TODO Add calbacks
-inPins = [21]
-outPins = [27]
 retroPlayer = MediaPlayer(inPins, outPins)
 
 # ######### MULTIPLEXER #########
@@ -210,6 +219,14 @@ multiFuncs = [
 ]
 retroPlayer.addMultiplexer(multiInPins, multiOutPins, multiFuncs)
 
+
+# def signal_handler(signal, frame):
+#     logging.info("MediaPlayer cancelled by user")
+#     retroPlayer.shutdown()
+# signal.signal(signal.SIGINT, signal_handler)
+
+
+logging.info("Starting RetroPlayer")
 try:
     retroPlayer.start()
 except KeyboardInterrupt:
@@ -217,5 +234,5 @@ except KeyboardInterrupt:
 except Exception as ex:
     logging.error(f"How embarrassing. The following error occurred: {ex}")
     traceback.print_exc()
-finally:
-    retroPlayer.shutdown()
+# finally:
+# retroPlayer.shutdown()

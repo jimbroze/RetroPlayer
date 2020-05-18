@@ -12,7 +12,9 @@ import serial_asyncio
 import json
 
 # filter steady time in us. (10ms)
-debounceTime = 10 * 1000
+DEBOUNCE_TIME = 10 * 1000
+# Buffer time after debounce to allow program to catch up. Maybe not needed?
+PAUSE_TIME = 0.5 * 1000
 
 # pins = [pin, pullup, detect, callback?]
 
@@ -37,7 +39,13 @@ class PlayerIO(pigpio.pi):
     levels = None
 
     def __init__(
-        self, mediaPlayer, inPins, callbacks, outPins, levels, debounceTime=10000,
+        self,
+        mediaPlayer,
+        inPins,
+        callbacks,
+        outPins,
+        levels,
+        debounceTime=DEBOUNCE_TIME,
     ):
         self.mediaPlayer = mediaPlayer
         self.loop = mediaPlayer.get_loop()
@@ -62,16 +70,20 @@ class PlayerIO(pigpio.pi):
 
     def setInPin(self, pin, pull=None):
         self.set_mode(pin, pigpio.INPUT)
+        logging.debug(f"Set {pin} to input")
         if pull == "up":
             self.set_pull_up_down(pin, pigpio.PUD_UP)
+            logging.debug(f"{pin} Pulled up")
         elif pull == "down":
             self.set_pull_up_down(pin, pigpio.PUD_DOWN)
+            logging.debug(f"{pin} Pulled down")
         # Filter edge detection: Level change must be steady for steady microseconds
         self.set_glitch_filter(pin, self.debounceTime)
 
     def setOutPin(self, pin, level):
         self.set_mode(pin, pigpio.OUTPUT)
         self.write(pin, level)
+        logging.debug(f"Set {pin} to output - {level}")
 
     def setCallbacks(self, pins, callbackFuncs):
         callbacks = []
@@ -91,7 +103,7 @@ class PlayerIO(pigpio.pi):
         # Is there any need for this func?
 
     def pinCallback(self, gpio, level, tick):
-        print("Hi")
+        logging.debug(f"In pin {gpio} changed to {level}")
 
     def getLoop(self):
         return self.loop
@@ -102,7 +114,8 @@ class MultiplexInput:
     Takes, mediaplyer, input pins, output pins and a nested list of
     callback functions as inputs."""
 
-    state = 0
+    # Initial state of 1. Setup pins before setting to 0
+    state = 1
 
     def __init__(self, playerio, inPins, outPins, multiCallback):
         self.playerio = playerio
@@ -111,16 +124,22 @@ class MultiplexInput:
         self.outPins = outPins
         self.multiCallback = multiCallback
 
-    def setup(self):
+    async def setup(self):
         logging.debug("Setting out pins")
         for pin in self.outPins:
             self.playerio.setOutPin(pin, 1)
         logging.debug("Setting in pins")
         for pin in self.inPins:
-            self.playerio.setInPin(pin)
+            self.playerio.setInPin(pin, pull="down")
         self.callbackobjs = self.playerio.setCallbacks(
             self.inPins, [self.check_inputs for _ in self.inPins],
         )
+        logging.debug(f"State is {self.state}")
+        # FIXME Requires a long wait to ensure pins are stable.
+        # Could change this to wait until pins are 0?
+        await asyncio.sleep((10 * DEBOUNCE_TIME + PAUSE_TIME) / 1000000)
+        self.state = 0
+        logging.debug(f"State is {self.state}")
 
     def check_inputs(self, gpio, level, tick):
         """Input callback"""
@@ -134,18 +153,25 @@ class MultiplexInput:
 
     async def cycle_pins(self, inPin):
         """Cycle through switching off multiplexing outputs until pin goes low"""
+        logging.debug("MULTIPLEXER: Start cycling multiplexer pins")
         for idx, outPin in enumerate(self.outPins):
-            logging.debug(f"Changing pin {outPin} to 0")
+            logging.debug(f"MULTIPLEXER: Changing pin {outPin} to 0")
             self.playerio.write(outPin, 0)
-            await asyncio.sleep((debounceTime + 5) / 1000000)
+            await asyncio.sleep((DEBOUNCE_TIME + PAUSE_TIME) / 1000000)
             # If input changes, connected output pin was the one that changed
             if self.inPinLevels[inPin] == 0:
-                self.playerio.setOutPins(self.outPins, [1 for _ in self.outPins])
+                for pin in self.outPins:
+                    self.playerio.setOutPin(pin, 1)
+                await asyncio.sleep((DEBOUNCE_TIME + PAUSE_TIME) / 1000000)
                 self.state = 0
+                logging.info(f"MULTIPLEXER: Inpin was {inPin}, OutPin {outPin}")
                 return self.multiCallback(self.inPins.index(inPin), idx + 1)
         # If input level does not change, output is hardwired (0)
-        self.playerio.setOutPins(self.outPins, [1 for _ in self.outPins])
+        for pin in self.outPins:
+            self.playerio.setOutPin(pin, 1)
+        await asyncio.sleep((DEBOUNCE_TIME + (1 * 1000)) / 1000000)
         self.state = 0
+        logging.info(f"MULTIPLEXER: Inpin was {inPin}, OutPin was Hardwired")
         return self.multiCallback(inPin, 0)
 
 
