@@ -22,7 +22,9 @@ import time
 import logging
 
 import Adafruit_GPIO.SPI as SPI
-import Adafruit_SSD1306
+
+# import Adafruit_SSD1306
+import SSD1305
 
 from PIL import Image
 from PIL import ImageDraw
@@ -36,13 +38,10 @@ LOG_FORMAT = "%(asctime)s %(levelname)s %(message)s"
 logging.basicConfig(filename=LOG_FILE, format=LOG_FORMAT, level=LOG_LEVEL)
 
 # Raspberry Pi pin configuration:
-# RST = 26
-RST = 37
+RST = 26
 # Note the following are only used with SPI:
-# DC = 12
-DC = 32
-# CS = 8
-CS = 24
+DC = 13
+
 SPI_PORT = 0
 SPI_DEVICE = 0
 
@@ -66,21 +65,19 @@ SPI_DEVICE = 0
 # with the 128x32 display you would use:
 # disp = Adafruit_SSD1306.SSD1306_128_32(rst=RST, i2c_bus=2)
 
-# # 128x32 display with hardware SPI:
-# disp = Adafruit_SSD1306.SSD1306_128_32(
-#     rst=RST, dc=DC, cs=CS, spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE, max_speed_hz=8000000)
-# )
-
+time.sleep(6)
 # 128x32 display with hardware SPI:
-disp = Adafruit_SSD1306.SSD1306_128_32(
+# disp = Adafruit_SSD1306.SSD1306_128_32(
+#     rst=RST, dc=DC, spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE, max_speed_hz=4000000)
+# )
+disp = SSD1305.SSD1305_128_32(
     rst=RST, dc=DC, spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE, max_speed_hz=8000000)
 )
 
-# 128x32 display with hardware SPI:
-# disp = Adafruit_SSD1306.SSD1306_128_32(rst=RST, dc=DC, cs=CS, sclk=11, din=10)
-
 # 128x64 display with hardware SPI:
-# disp = Adafruit_SSD1306.SSD1306_128_64(rst=RST, dc=DC, spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE, max_speed_hz=8000000))
+# disp = Adafruit_SSD1306.SSD1306_128_64(
+#     rst=RST, dc=DC, spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE, max_speed_hz=8000000)
+# )
 
 # Alternatively you can specify a software SPI implementation by providing
 # digital GPIO pin numbers for all the required display pins.  For example
@@ -97,7 +94,9 @@ disp.display()
 # Create blank image for drawing.
 # Make sure to create image with mode '1' for 1-bit color.
 width = disp.width
+logging.debug(width)
 height = disp.height
+logging.debug(height)
 image = Image.new("1", (width, height))
 
 # Get drawing object to draw on image.
@@ -146,4 +145,3 @@ draw.text((x, top + 20), "World!", font=font, fill=255)
 # Display image.
 disp.image(image)
 disp.display()
-# time.sleep(10)
