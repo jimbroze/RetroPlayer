@@ -12,8 +12,8 @@ FONTSCALE = 1
 
 pins = {
     "cs": digitalio.DigitalInOut(board.D8),
-    "dc": digitalio.DigitalInOut(board.D12),
-    "rs": digitalio.DigitalInOut(board.D20),
+    "dc": digitalio.DigitalInOut(board.D13),
+    "rs": digitalio.DigitalInOut(board.D26),
 }
 
 

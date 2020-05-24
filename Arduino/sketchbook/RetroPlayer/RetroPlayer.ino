@@ -1,6 +1,8 @@
 
 #include <string>
 #include <ArduinoJson.h>
+#include "LowPower.h"
+#include "PCF8523.h"
 #include "SleepyPi2.h"
 
 #define DEBOUNCE 10  // button debouncer, how many ms to debounce, 5+ ms is usually plenty
@@ -10,9 +12,15 @@ const byte DOOR_PIN = 3;	// Pin B0 - Arduino 8
 const unsigned int POWER_ON_TIMEOUT = 30; // Seconds
 const unsigned int HANDSHAKE_TIMEOUT = 30; // Seconds
 
-byte inputs[] = {4, 5, 6, 7, 8, 9};
-#define NUMINPUTS sizeof(inputs)
-byte inputState[NUMINPUTS];
+byte inputs[] = {2, 3, 5, 6, 8, 11, 12};
+#define NUM_INPUTS sizeof(inputs);
+byte inputState[NUM_INPUTS];
+
+byte outputs[] = {7, 10, 13};
+#define NUM_OUTPUTS sizeof(outputs);
+byte outputState[NUM_OUTPUTS];
+
+byte analogues[] = {"A0", "A1", "A4", "A5"};
 
 char* serialKeys[] = {
     "display",
@@ -24,6 +32,116 @@ byte arduinoState = 50;
 byte piState = 50;
 byte displayOn = 0;
 byte piAwake = 0;
+
+
+// ************************* SERIAL FUNCS *************************
+
+void read_serial_data() {
+
+    if (Serial.available() <= 0) {
+        return;
+    }
+    // read the incoming byte:
+    int inData = Serial.read();
+
+    StaticJsonDocument<256> doc;
+    DeserializationError error = deserializeJson(doc, inData);
+    if (error) {
+        Serial.println(error.c_str()); 
+        return;
+    }
+    // Get a reference to the root object
+    JsonObject obj = doc.as<JsonObject>();
+    // Loop through all the key-value pairs in obj
+    for(auto p: obj) {
+//        p.key(); // is a JsonString
+//        p.value(); // is a JsonVariant
+    }
+
+    // TODO Set pi state
+}
+
+void send_serial_value(const char *key, byte value) {
+    const int capacity=JSON_OBJECT_SIZE(1);
+    StaticJsonDocument<capacity> doc;
+    
+    doc[key] = value;
+    // Produce a minified JSON document
+    serializeJson(doc, Serial);
+    serial.println();
+}
+
+void send_serial_dict(byte data[]) {
+    const int capacity=JSON_OBJECT_SIZE(SERIAL_ARRAY_SIZE);
+    StaticJsonDocument<capacity> doc;
+    string output;
+
+    for (byte i = 0; i < SERIAL_ARRAY_SIZE; i++)
+        doc[serialKeys[i]] = data[i];
+    // Produce a minified JSON document
+    serializeJson(doc, Serial);
+    serial.println();
+}
+
+// ************************* HARDWARE IO *************************
+
+void check_inputs() {
+    static byte newInputState[NUM_INPUTS];
+    static byte debounce[NUM_INPUTS];
+    static long lastTime[NUM_INPUTS];
+  
+    for (byte i = 0; i < NUM_INPUTS; i++) {
+        if (millis() < lastTime[i]) {
+            lastTime[i] = millis(); // Timer has wrapped around
+        }
+ 
+        if ((lastTime[i] + DEBOUNCE) > millis()) {
+            continue; // not enough time has passed to debounce
+        }
+        // DEBOUNCE time passed or not started
+
+        newInputState[i] = digitalRead(inputs[i]);   // read the input
+
+        if (newInputState[i] == inputState[i]) {
+            if (debounce[i] == 1)  {
+                debounce[i] = 0; // Debounce failed, reset
+            }
+            continue; // Debounced failed or not started
+        }
+        if (debounce[i] == 1) {
+            debounce[i] = 0; // Debouncing finished, stop debounce
+            inputState[i] = newInputState[i];
+            inputCallbacks [i] (inputState[i]);
+        } else {
+            debounce[i] = 1; // Debounce not started, start debounce
+        }
+        // Input changed. Reset timer
+        lastTime[i] = millis();
+    }
+}
+
+void check_analogues() {
+    // static byte debounce;
+    for (byte i=0; i< NUM_ANALOGUES; i++) {
+        int reading = analogRead(analogues[i]);
+        delay(10);
+        // TODO Filter??
+    }
+}
+
+// ************************* CALLBACK HANDLERS *************************
+
+void wakeup_no_display()
+{
+    // Handler for the wakeup interrupt with no display
+    arduinoState = 110;
+}
+
+void wakeup_with_display()
+{
+    // Handler for the wakeup interrupt with display
+    arduinoState = 120;
+}
 
 void doAction0 (byte level) {
     Serial.println (0);
@@ -56,100 +174,8 @@ ioFunction inputCallbacks [] = {
 };
 
 
-void read_serial_data() {
+// ************************* STATE MACHINES *************************
 
-    if (Serial.available() <= 0) {
-        return;
-    }
-    // read the incoming byte:
-    int inData = Serial.read();
-
-    StaticJsonDocument<256> doc;
-    DeserializationError error = deserializeJson(doc, inData);
-    if (error) {
-        Serial.println(error.c_str()); 
-        return;
-    }
-    // Get a reference to the root object
-    JsonObject obj = doc.as<JsonObject>();
-    // Loop through all the key-value pairs in obj
-    for(auto p: obj) {
-//        p.key(); // is a JsonString
-//        p.value(); // is a JsonVariant
-    }
-
-    // TODO Set pi state
-}
-
-void send_serial_value(string key, byte value) {
-    const int capacity=JSON_OBJECT_SIZE(1);
-    StaticJsonDocument<capacity> doc;
-    string output;
-    
-    doc[key] = value;
-    // Produce a minified JSON document
-    serializeJson(doc, output);
-    serial.print(output);
-}
-
-void send_serial_dict(byte data[]) {
-    const int capacity=JSON_OBJECT_SIZE(SERIAL_ARRAY_SIZE);
-    StaticJsonDocument<capacity> doc;
-    string output;
-
-    for (byte i = 0; i < SERIAL_ARRAY_SIZE; i++)
-        doc[serialKeys[i]] = data[i];
-    // Produce a minified JSON document
-    serializeJson(doc, output);
-    serial.print(output);
-}
-
-void check_inputs() {
-    static byte newInputState[NUMINPUTS];
-    static byte debounce[NUMINPUTS];
-    static long lastTime[NUMINPUTS];
-  
-    for (byte i = 0; i < NUMINPUTS; i++) {
-        if (millis() < lastTime[i]) {
-            lastTime[i] = millis(); // Timer has wrapped around
-        }
- 
-        if ((lastTime[i] + DEBOUNCE) > millis()) {
-            continue; // not enough time has passed to debounce
-        }
-        // DEBOUNCE time passed or not started
-
-        newInputState[i] = digitalRead(inputs[i]);   // read the input
-
-        if (newInputState[i] == inputState[i]) {
-            if (debounce[i] == 1)  {
-                debounce[i] = 0; // Debounce failed, reset
-            }
-            continue; // Debounced failed or not started
-        }
-        if (debounce[i] == 1) {
-            debounce[i] = 0; // Debouncing finished, stop debounce
-            inputState[i] = newInputState[i];
-            inputCallbacks [i] (inputState[i]);
-        } else {
-            debounce[i] = 1; // Debounce not started, start debounce
-        }
-        // Input changed. Reset timer
-        lastTime[i] = millis();
-    }
-}
-
-void wakeup_no_display()
-{
-    // Handler for the wakeup interrupt with no display
-    arduinoState = 110;
-}
-
-void wakeup_with_display()
-{
-    // Handler for the wakeup interrupt with display
-    arduinoState = 120;
-}
 
 void pi_controller() {
     static byte handshakeStatus;
@@ -186,10 +212,10 @@ void pi_controller() {
                 // TODO Send pi data as struct?
             }
 
+        case 200: // Maintenence mode
+
     }
 }
-
-
 
 void arduino_controller() {
     static long onTime;
@@ -230,8 +256,21 @@ void arduino_controller() {
             }
             arduinoState = 130;
         case 150: // Standard awake state
+
+        case 200: // Maintenence mode request
+            // Turn off analogue source and sink
+            SleepyPi.enableExtPower(false);
+            pinMode(OUT_SINK, INPUT);
+            send_serial_value("state", arduinoState)
+            arduinoState = 202;
+
+        case 202:  // In maintenence mode
     }
 }
+
+
+
+// ************************* MAIN PROGRAM *************************
 
 void setup() {
     // Set the initial Power to be off
@@ -242,12 +281,18 @@ void setup() {
     pinMode(DOOR_PIN, INPUT);
     pinMode(POWER_SWITCH_PIN, INPUT);
     
-    Serial.begin(1152000);
+    Serial.begin(9600);
 
-    // Make input & enable pull-up resistors on switch pins
-    for (byte i=0; i< NUMINPUTS; i++) {
+    // Setup inputs. Off is high, on is low
+    for (byte i=0; i< NUM_INPUTS; i++) {
         pinMode(inputs[i], INPUT);
         inputState[i] = digitalRead(inputs[i]);   // read the inputs
+    }
+
+    // Setup outputs
+    for (byte i=0; i< NUM_OUTPUTS; i++) {
+        pinMode(outputs[i], OUTPUT);
+        digitalWrite(outputs[i], LOW);  // Set to off
     }
 }
 
