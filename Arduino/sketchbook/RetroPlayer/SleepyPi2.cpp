@@ -553,4 +553,5 @@ float SleepyPiClass::rpiCurrent(void)
 
 }	
 
-SleepyPiClass SleepyPi;
+// SleepyPiClass SleepyPi; 
+// Don't instantiate.

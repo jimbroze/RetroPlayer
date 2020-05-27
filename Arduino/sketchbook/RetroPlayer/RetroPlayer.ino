@@ -5,6 +5,65 @@
 #include "PCF8523.h"
 #include "SleepyPi2.h"
 
+class SleepyPlayer;
+
+// Abstract base class denoted by virtual = 0
+class StateMachine {
+    public:
+        virtual void process() = 0;
+        // void set_state();
+
+    private:
+        byte state;
+};
+
+class PiController {
+    friend class SleepyPlayer;
+    public:
+        void process();
+
+    private:
+        SleepyPlayer *sleepyPi_;
+        byte myState;
+        byte handshakeStatus;
+        long lastHandshakeTime;
+        bool piPower;
+        
+};
+
+class ArduinoController {
+    friend class SleepyPlayer;
+    public:
+        void process();
+
+    private:
+        SleepyPlayer *sleepyPi_;
+        byte myState;
+        long onTime;
+
+        // FIXME NEED CONSTRUCTORS!!!!!!!!!!!!!!
+};
+
+class SleepyPlayer: public SleepyPiClass {
+    private:
+        PiController *piController_;
+        ArduinoController *arduinoController_;
+    public:
+        SleepyPlayer(PiController *piController, ArduinoController *arduinoController) {
+            piController_ = piController;
+            arduinoController_ = arduinoController;
+        }
+
+        inline void set_pi_state(byte state) { piController_->myState = state; }
+        inline void set_arduino_state(byte state) { arduinoController_->myState = state; }
+        inline byte get_pi_state() { return piController_->myState; }
+        inline byte get_arduino_state() { return arduinoController_->myState; }
+        inline void process_pi() { piController_->process(); }
+        inline void process_arduino() { arduinoController_->process(); }
+};
+
+
+
 const byte DEBOUNCE = 10;  // button debouncer, how many ms to debounce, 5+ ms is usually plenty
  
 const byte POWER_SWITCH_PIN = 2;	// Pin B0 - Arduino 8
@@ -39,7 +98,7 @@ const byte numChars = 64; //Increase if required for more data.
 
 // TODO Can values change without function?? i.e state machine checks values. Much simpler
 void pi_on(byte data) {
-    awake = data;
+    byte awake = data;
 }
 void funcB(byte) {
     return;
@@ -258,30 +317,27 @@ void check_analogues() {
 // ************************* STATE MACHINES *************************
 
 
-void pi_controller() {
-    static byte handshakeStatus;
-    static long lastHandshakeTime;
-    static bool piPower;
-    switch(piState) { // State machine to control power up sequence
+void PiController::process() {
+    switch(myState) { // State machine to control power up sequence
         case 10: // Shutdown
             // Send shutdown signal
         case 20: // Shutting down
             //TODO Check current. When confirmed off:
-            piPower = SleepyPi.checkPiStatus(false);  // Don't Cut Power automatically
+            piPower = sleepyPi_->checkPiStatus(false);  // Don't Cut Power automatically
             if (piPower == false) {
-                piState = 30;
+                myState = 30;
                 // TODO Clear serial buffer?
-                SleepyPi.enablePiPower(false); 
-                piState = 50;
+                sleepyPi_->enablePiPower(false); 
+                myState = 50;
             }
         case 50: // Pi is off
             // 
         case 110: // Wakeup Pi
-            SleepyPi.enablePiPower(true);
-            piState = 120;
+            sleepyPi_->enablePiPower(true);
+            myState = 120;
         case 120: // Wait for Pi wakeup confirmation
             if (piAwake == 1) {
-                piState = 130;
+                myState = 130;
                 handshakeStatus = 1;
                 // Send pi initial data
                 send_serial_dict();
@@ -290,28 +346,27 @@ void pi_controller() {
         case 130: // Wait for handshake confirmation
             if (handshakeStatus == 2) {
                 lastHandshakeTime = millis();
-                piState = 150;
+                myState = 150;
                 // FIXME two handshake states?
             }
         case 140: // Handshake confirmed. Check time since last message
             if ( (lastHandshakeTime + HANDSHAKE_TIMEOUT) > millis() ) {
-                piState = 160;
+                myState = 160;
                 // Send pi handshake data
                 // TODO Send pi data as struct?
             }
-
         case 200: // Maintenence mode
+            break;
+        default:
             break;
     }
 }
 
-void arduino_controller() {
-    static long onTime;
-
-    switch(arduinoState) { // State machine to control arduino power
+void ArduinoController::process() {
+    switch(myState) { // State machine to control arduino power
         case 10: //Request to sleep
             // Ensure pi is off.
-            // if (SleepyPi.power????)
+            // if (sleepyPi.power????)
                 // arduinoState = 50;
         case 50: // Low power state
              // Attach WAKEUP_PIN to wakeup ATMega
@@ -320,7 +375,7 @@ void arduino_controller() {
 
             // Enter power down state with ADC and BOD module disabled.
             // Wake up when wake up pins are high.
-            SleepyPi.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF); 
+            sleepyPi_->powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF); 
             
             // ###################### WOKEN UP ######################
             // Disable external pin interrupt on WAKEUP_PIN pin.
@@ -329,28 +384,28 @@ void arduino_controller() {
 
             onTime = millis(); // Start timing power on time
 
-            piState = 110; // Wakeup pi when arduino is awake
+            sleepyPi_->set_pi_state(110); // Wakeup pi when arduino is awake
         case 110: // Woken up, no display
             // If display is off and timeout has passed, shutdown
             if ((onTime + POWER_ON_TIMEOUT) > millis() ) {
-                piState = 10; // Shutdown Pi
-                arduinoState = 10; // Shutdown arduino
+                sleepyPi_->set_pi_state(10); // Shutdown Pi
+                myState = 10; // Shutdown arduino
             }
             // TODO If inputs tripped, turn display on
         case 120: // Woken up, display should be on
             displayOn = 1;
-            if (piState > 120) { // Initial data already sent. Send display on seperate
+            if (sleepyPi_->get_pi_state() > 120) { // Initial data already sent. Send display on seperate
                 send_serial_value("disp", 1);
             }
-            arduinoState = 130;
+            myState = 130;
         case 150: // Standard awake state
 
         case 200: // Maintenence mode request
             // Turn off analogue source and sink
-            SleepyPi.enableExtPower(false);
+            sleepyPi_->enableExtPower(false);
             pinMode(ANALOGUE_SINK, INPUT);
-            send_serial_value("state", arduinoState);
-            arduinoState = 202;
+            send_serial_value("state", myState);
+            myState = 202;
 
         case 202:  // In maintenence mode
             break;
@@ -361,17 +416,19 @@ void arduino_controller() {
 
 // ************************* MAIN PROGRAM *************************
 
+SleepyPlayer sleepyPi(new PiController, new ArduinoController);
+
 void setup() {
+    Serial.begin(9600);
+
     // Set the initial Power to be off
-    SleepyPi.enablePiPower(false);  
-    SleepyPi.enableExtPower(false);
+    sleepyPi.enablePiPower(false);  
+    sleepyPi.enableExtPower(false);
 
     // Configure "Wakeup" pins as inputs
     pinMode(DOOR_PIN, INPUT);
     pinMode(POWER_SWITCH_PIN, INPUT);
     
-    Serial.begin(9600);
-
     // Setup inputs. Off is high, on is low
     for (byte i=0; i< NUM_INPUTS; i++) {
         pinMode(inputs[i], INPUT);
@@ -386,13 +443,13 @@ void setup() {
 }
 
 void loop() {
-    arduino_controller(); // State machine to handle arduino power
-    pi_controller(); // State machine to handle pi power and handshaking
-    if (arduinoState > 100) { // If arduino is on, read inputs
+    sleepyPi.process_arduino(); // State machine to handle arduino power
+    sleepyPi.process_pi(); // State machine to handle pi power and handshaking
+    if (sleepyPi.get_arduino_state() > 100) { // If arduino is on, read inputs
         check_inputs();
         check_analogues();
     }
-    if (piState > 100) { // If pi is on, read serial
+    if (sleepyPi.get_pi_state() > 100) { // If pi is on, read serial
         read_serial_data();
     }
 }
