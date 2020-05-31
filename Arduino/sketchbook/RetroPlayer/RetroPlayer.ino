@@ -51,8 +51,7 @@ class RetroPlayer {
         void send_serial(const char *key, int value[]);
         void send_serial();
         
-        void update_value(byte key, byte value);
-        void update_value(byte key, int value);
+        void update_value(byte key);
         void update_value(byte key, byte value[]);
         void update_value(byte key, int value[]);
 
@@ -65,7 +64,7 @@ class RetroPlayer {
 
         long ardOnTime;
         enum PlayerState {
-            shuttingDown, off, lowPower, dispOff, dispOnIgOn, dispOnIgOff, shutdownTimeout
+            shuttingDown, off, lowPower, dispOff, dispOnAuto, dispOnManual, shutdownTimeout
         } myState;
         enum Handshake {
             none, sent, success, failed
@@ -130,16 +129,12 @@ const char serialOutKeys[][7] = {
     "off",
     "maint",
     "volSw",
-    "inLight",
-    "ign"
 };
 
 const byte SERIAL_OUT_SIZE = sizeof(serialOutKeys) / sizeof(serialOutKeys)[0];
 
 //Intial byte values
 byte playerOut[SERIAL_OUT_SIZE] = {
-    0,
-    0,
     0,
     0,
     0,
@@ -316,27 +311,18 @@ void RetroPlayer::read_serial_data() {
     }
 }
 
-void RetroPlayer::update_value(byte key, byte value) {
+void RetroPlayer::update_value(byte key) {
     if (handshakeState == none) {
         return;
     }
-    this->send_serial(serialInKeys[key], value);
+    this->send_serial(serialOutKeys[key], playerOut[key]);
 }
-
-void RetroPlayer::update_value(byte key, int value) {
-    if (handshakeState == none) {
-        return;
-    }
-    this->send_serial(serialInKeys[key], value);
-}
-
 void RetroPlayer::update_value(byte key, byte value[]) { // Byte array
     if (handshakeState == none) {
         return;
     }
     this->send_serial(serialInKeys[key], value);
 }
-
 void RetroPlayer::update_value(byte key, int value[]) { // int array
     if (handshakeState == none) {
         return;
@@ -373,16 +359,13 @@ void RetroPlayer::handshake() {
 // ************************* HARDWARE IO *************************
 
 void RetroPlayer::power_switch(byte level) {
-    playerOut[POWER_SWITCH]= level;
-    this->update_value(POWER_SWITCH, level);
+    volSwitch = level;
 }
 void RetroPlayer::door_light(byte level) {
-    playerOut[INT_LIGHTS]= level;
-    this->update_value(INT_LIGHTS, level);
+    intLights = level;
 }
 void RetroPlayer::ignition(byte level) {
-    playerOut[IGNITION]= level;
-    this->update_value(IGNITION, level);
+    ignition = level;
 }
 void RetroPlayer::boot_release_but(byte level) {
     return;
@@ -421,6 +404,7 @@ void RetroPlayer::check_dig_inputs() {
             debounce[i] = 0; // Debouncing finished, stop debounce
             inputState[i] = newInputState[i];
             CALL_MEMBER_FN(*this, inputCallbacks[i]) (inputState[i]); // Use #define macro to call input functions
+            update_value(DIGITAL_IN, inputState); // Send inputs when one changes
         } else {
             debounce[i] = 1; // Debounce not started, start debounce
         }
@@ -460,12 +444,12 @@ void RetroPlayer::display_on(bool wakeup = false) {
 }
 void RetroPlayer::wakeup() {
     if (playerOut[DISPLAY] == 1) {
-        if (playerOut[IGNITION] == 1) {
-            myState = dispOnIgOn;
+        if (ignition == 1) {
+            myState = dispOnAuto;
         }
         else
         {
-            myState = dispOnIgOff;
+            myState = dispOnManual;
         }
     }
     else
@@ -480,24 +464,29 @@ void RetroPlayer::maintenence_mode() { // Cancel analog power setup so i2c can b
     sleepyPi_->enableExtPower(false);
     pinMode(ANALOGUE_SINK, INPUT);
     playerOut[MAINT]= 1;
-    this->update_value(MAINT, 1);
+    this->update_value(MAINT);
 }
 void RetroPlayer::normal_mode() { // Setup analogues to read
     sleepyPi_->enableExtPower(true);
     pinMode(ANALOGUE_SINK, OUTPUT);
     digitalWrite(ANALOGUE_SINK, LOW);
     playerOut[MAINT]= 0;
-    this->update_value(MAINT, 0);
+    this->update_value(MAINT);
 }
-void RetroPlayer::shutdown_request() {
+void RetroPlayer::shutdown_request(byte shutdownType = 2) {
     shutdownTimer = millis();
-    myState = shutdownTimeout;
+    playerOut[OFF]= shutdownType; //Shutdown request code (2=auto, 3=manual)
+    this->update_value(OFF);
+    if (shutdownType == 3) {
+        myState = shutdownTimeoutManual;
+    } else {
+        myState = shutdownTimeoutAuto;
+    }
 }
 void RetroPlayer::shutdown() {
     // Send shutdown signal
-    handshakeState = none;
     playerOut[OFF]= 1;
-    this->update_value(OFF, 1);
+    this->update_value(OFF);
     myState = shuttingDown; // Shutdown arduino
 }
 
@@ -526,6 +515,11 @@ void RetroPlayer::power_control() {
             detachInterrupt(DOOR_PIN);
             detachInterrupt(POWER_SWITCH_PIN);
 
+            if (volSwitch == 1) { // If switch is off, go back to sleep.
+                playerOut[DISPLAY] == 0;
+                break;
+            }
+
             ardOnTime = millis(); // Start timing power on time
 
             wakeup(); // Set next state based on inputs
@@ -535,30 +529,45 @@ void RetroPlayer::power_control() {
         case dispOff: // Woken up, no display
             // If display is off and timeout has passed, shutdown
             // TODO If inputs tripped, turn display on
-            if (playerOut[IGNITION] = 1) {
+            if (ignition == 1) {
                 display_on();
                 break;
             }
-            if (playerOut[POWER_SWITCH] = 1) {
+            if (volSwitch == 1) { //FIXME
                 display_on();
                 break;
             }
             if ((ardOnTime + POWER_ON_TIMEOUT) > millis() ) {
                 shutdown(); // Shutdown Pi
             }
-        case dispOnIgOn: // Woken up with ignition, display should be on
-            if (PlayerOut[IGNITION] == 0) {
-                shutdown_request();
+        // *********** Regular auto on/off (Not using vol switch) ***********
+        case dispOnAuto: // Woken up with ignition, display should be on
+            if (ignition == 0 && intLights == 1) {
+                shutdown_request(2); // Auto
             }
-        case dispOnIgOff: // Woken up but ignition is off (Using vol switch)
-            if (PlayerOut[POWER_SWITCH] == 0) {
-                shutdown_request();
+            if (volSwitch == 0) { 
+                shutdown_request(3); // Manual
             }
-        case shutdownTimeout: // Power switch turned off
+        case shutdownTimeoutAuto: 
             if ((shutdownTimer + SHUTDOWN_TIMEOUT) > millis() ) {
                 shutdown();
             }
-            if (PlayerOut[IGNITION] == 1 || PlayerOut[POWER_SWITCH] == 1) { //FIXME Is this correct?
+            if (ignition == 1  || keepAlive == 1) {
+                wakeup(); //Cancel shutdown 
+            }
+        // *********** Manual on/off (Using vol switch) ***********
+        case dispOnManual: // Woken up but ignition is off (Using vol switch)
+            if (volSwitch == 0) {
+                shutdown_request();
+            }
+            if (ignition == 1) {
+                myState = dispOnAuto;
+            }
+        case shutdownTimeoutManual: // Power switch turned off
+            if ((shutdownTimer + SHUTDOWN_TIMEOUT) > millis() ) {
+                shutdown();
+            }
+            if (volSwitch == 1 || keepAlive == 1) {
                 wakeup(); //Cancel shutdown 
             }
     }
@@ -580,7 +589,7 @@ void wakeup_no_display()
 void wakeup_with_display()
 {
     // Handler for the wakeup interrupt with display
-    retroPlayer.display_on(true);
+    retroPlayer.display_on(wakeup=true);
 }
 
 void setup() {
