@@ -8,3 +8,5 @@ i2cset -y 1 0x24 0xFD && arduino-cli compile --fqbn arduino:avr:fio tester && av
 i2cset -y 1 0x24 0xFD && arduino-cli compile --fqbn arduino:avr:fio /root/jim/Arduino/sketchbook/testerIn && avrdude -v -c arduino -p m328p -P /dev/ttyS0 -b 57600 -U flash:w:/root/jim/Arduino/sketchbook/testerIn/testerIn.arduino.avr.fio.hex:i
 
 i2cset -y 1 0x24 0xFD && arduino-cli compile --fqbn arduino:avr:fio /root/jim/Arduino/sketchbook/serialTest && avrdude -v -c arduino -p m328p -P /dev/ttyS0 -b 57600 -U flash:w:/root/jim/Arduino/sketchbook/serialTest/serialTest.arduino.avr.fio.hex:i
+
+i2cset -y 1 0x24 0xFD && arduino-cli compile --fqbn arduino:avr:fio /root/jim/Arduino/sketchbook/RetroPlayer && avrdude -v -c arduino -p m328p -P /dev/ttyS0 -b 57600 -U flash:w:/root/jim/Arduino/sketchbook/RetroPlayer/RetroPlayer.arduino.avr.fio.hex:i

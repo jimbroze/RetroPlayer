@@ -26,12 +26,14 @@
 #include "PCF8523.h"
 #include "SleepyPi2.h"
 
+const int IN_PIN_0 = 2;
 const int IN_PIN_1 = 5;
 const int IN_PIN_2 = 3;
 const int IN_PIN_3 = 6;
 const int IN_PIN_4 = 12;
 const int IN_PIN_5 = 11;
 const int IN_PIN_6 = 8;
+int val0 = 0;
 int val1 = 0;
 int val2 = 0;
 int val3 = 0;
@@ -44,6 +46,9 @@ void setup()
 {
     // initialize digital pin LED_BUILTIN as an output.
     pinMode(LED_BUILTIN, OUTPUT);
+
+    pinMode(IN_PIN_0, INPUT_PULLUP);
+    digitalWrite(IN_PIN_0, HIGH);
 
     pinMode(IN_PIN_1, INPUT);
     pinMode(IN_PIN_2, INPUT);
@@ -59,6 +64,7 @@ void setup()
 // the loop function runs over and over again forever
 void loop()
 {
+    val0 = digitalRead(IN_PIN_0);
     val1 = digitalRead(IN_PIN_1);
     val2 = digitalRead(IN_PIN_2);
     val3 = digitalRead(IN_PIN_3);
@@ -66,6 +72,7 @@ void loop()
     val5 = digitalRead(IN_PIN_5);
     val6 = digitalRead(IN_PIN_6);
     if (val1 == LOW || val2 == LOW || val3 == LOW || val4 == LOW || val5 == LOW || val6 == LOW)
+    if (val0 == LOW)
     {
         digitalWrite(LED_BUILTIN, HIGH); // turn the LED on (HIGH is the voltage level)
     }
