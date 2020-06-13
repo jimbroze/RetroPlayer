@@ -38,9 +38,10 @@ class SerialData<T[arrLength]> : public SerialData_Base
 protected:
     T *dataStore;
     const char *m_key;
+    byte arrSize;
 
 public:
-    SerialData(T *dataIn, const char *key) : dataStore{dataIn}, m_key{key} {}
+    SerialData(T *dataIn, const char *key) : dataStore{dataIn}, m_key{key}, arrSize{arrLength} {}
     T *getData() { return dataStore; }
     virtual void setData(JsonVariant dataIn);
     virtual const char *getKey() { return m_key; }
@@ -51,10 +52,14 @@ public:
 class SerialComms
 {
 private:
-    byte dataOutSize;
-    byte dataInSize;
+    byte dataOutSize{0};
+    byte dataInSize{0};
     SerialData_Base **commsOutData; // Array of pointers
     SerialData_Base **commsInData; // Array of pointers
+    byte maxOutArrSize = 0;
+    byte maxInArrSize = 0;
+    byte numOutArrs = 0;
+    byte numInArrs = 0;
     int numChars;
     void process_serial_data(char serialData[]);
 
@@ -66,12 +71,12 @@ public:
     SerialData_Base *&operator[](byte index) { return commsOutData[index]; }
     template <class T>
     void addOutData(T *outData, const char *key);
-    template <class T, byte arrLength>
-    void addOutData(T (&outData)[arrLength], byte arrSize, const char *key);
+    template <class T>
+    void addOutData(T *outData, byte arrSize, const char *key);
     template <class T>
     void addInData(T *inData, const char *key);
-    template <class T, byte arrLength>
-    void addInData(T (&inData)[arrLength], byte arrSize, const char *key);
+    template <class T>
+    void addInData(T *inData, byte arrSize, const char *key);
 
     void sendData();
     template <class T> // Templated function for checking

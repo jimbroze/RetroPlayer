@@ -1,56 +1,20 @@
+#include "RetroPlayer.h"
+#include "SerialComms.h"
 
-// #include <string>
-// #include <ArduinoJson.h>
-#include "LowPower.h"
-#include "PCF8523.h"
-#include "SleepyPi2.h"
+constexpr byte NUM_DIGITAL {6};
+constexpr byte NUM_OUTPUTS {3};
+constexpr byte NUM_ANALOGS {4};
 
-// Serial constants. MUST BE BEFORE SerialComms INCLUDE.
-byte NUM_INPUTS {6};
-byte NUM_OUTPUTS {3};
-byte NUM_ANALOGUES {4};
-constexpr int DATA_MEMBERS {3}; //FIXME Remove and make dynamic json document
-constexpr int MAX_DATA_ARRAY = max(NUM_INPUTS, NUM_ANALOGUES);
-const unsigned int SERIAL_OUT_CAPACITY {JSON_OBJECT_SIZE(DATA_MEMBERS) + JSON_ARRAY_SIZE(NUM_INPUTS) + JSON_ARRAY_SIZE(NUM_ANALOGUES)};
-const unsigned int SERIAL_IN_CAPACITY = JSON_OBJECT_SIZE(SERIAL_IN_SIZE) + JSON_ARRAY_SIZE(NUM_OUTPUTS);
 // If size 3 object includes size 2 array
-const byte numChars = 64; //Increase if required for more data.
+const byte NUM_CHARS = 64; //Increase if required for more data.
 // Serial buffer is 64 bytes but program should read faster than buffer
 
 
-#include "SerialComms.h"
 
-    retroComms.sendData(&data1);
-    delay(1000);
-    retroComms.sendData(&data2);
-    delay(1000);
-    retroComms.sendData(data3);
-    delay(1000);
-    retroComms.sendData();
-    delay(8000);
-
-#define CALL_MEMBER_FN(object,ptrToMember)  ((object).*(ptrToMember))
-
-
-
-
-// Abstract base class denoted by virtual = 0
-class StateMachine {
-    public:
-        virtual void process() = 0;
-        // void set_state();
-
-    private:
-        byte state;
-};
-
-
-
+#define CALL_MEMBER_FN(object,ptrToMember)  ((object).*(ptrToMember)) //FIXME Is this needed?
 
 void wakeup_manual();
-void wakeup_no_display();
-
-
+void wakeup_auto();
 
 const byte DEBOUNCE = 10;  // input debouncer (ms)
  
@@ -61,84 +25,82 @@ const unsigned int HANDSHAKE_TIMEOUT = 30 * 1000; // Seconds
 const unsigned int SHUTDOWN_REQ_TIMEOUT = 30 * 1000; // Seconds
 const unsigned int SHUTDOWN_TIMEOUT = 30 * 1000; // Seconds
 
-byte inputs[NUM_INPUTS] = {2, 3, 5, 6, 11, 12};
+byte inputs[NUM_DIGITAL] = {2, 3, 5, 6, 11, 12};
 byte outputs[NUM_OUTPUTS] = {7, 10, 13};
-byte analogues[NUM_ANALOGUES][2] = {"A0", "A1", "A4", "A5"};
+byte analogues[NUM_ANALOGS][2] = {"A0", "A1", "A4", "A5"};
 byte ANALOGUE_SINK = 9;
 byte ANALOGUE_AVERAGES = 6; // Even no. so that jumps between 2 numbers are centralised
 
-byte digitalState[NUM_INPUTS];
+byte digitalInStates[NUM_DIGITAL];
 byte outputState[NUM_OUTPUTS];
-byte analogueState[NUM_ANALOGUES];
+byte analogueState[NUM_ANALOGS];
 
 // Single values:
 // errSer = Serial error (String)
 
-// Serial IN
-#define PI_AWAKE 0
-#define HANDSHAKE_RECEIVED 1
-#define KEEP_ALIVE 2
 
-const char serialInKeys[][7] = {
-    "awake",
-    "hand",
-    "alive"
-};
-const byte SERIAL_IN_SIZE = sizeof(serialInKeys) / sizeof(serialInKeys)[0];
+RetroPlayer::RetroPlayer(SleepyPiClass *sleepyPi, SerialComms *comms, byte digitalIns, byte analogIns, byte digitalOuts) : myState{off}, handshakeState{none}, sleepyPi_{sleepyPi}, comms_{comms}, numDigIns{digitalIns}, numAnalIns{analogIns}, numDigOuts{digitalOuts}
+{
+    digitalInStates = { new boolean[numDigIns] };
+    analogInStates = { new int[numAnalIns] };
+    digitalOutStates = { new boolean[numDigOuts] };
 
+    // Setup serial data references
+    comms_->addOutData(digitalInStates, NUM_DIGITAL, "dig");
+    comms_->addOutData(analogInStates, NUM_ANALOGS, "analog");
+    comms_->addOutData(&display, "disp");
+    comms_->addOutData(&piOff, "off");
+    comms_->addOutData(&mode, "mode");
+    comms_->addOutData(&volSwitch, "volSw");
+    comms_->addOutData(&handshakeData, "hand");
 
-// TODO Can values change without function?? i.e state machine checks values. Much simpler
-void pi_on(byte data) {
-    byte awake = data;
+    comms_->addInData(digitalOutStates, NUM_OUTPUTS, "out");
+    comms_->addInData(&piAwake, "awake");
+    comms_->addInData(&handshakeReceived, "hand");
+    comms_->addInData(&keepAlive, "alive");
 }
-void funcB(byte) {
-    return;
+RetroPlayer::~RetroPlayer()
+{
+    delete[] digitalInStates;
+    delete[] analogInStates;
+    delete[] digitalOutStates;
 }
-struct command {
-    char* funcName;
-    void (*function)(byte);
-};
-struct command commands[] = {
-    {"piOn", pi_on},
-    {"strB", funcB},
-    {0,0}
-};
 
 // ************************* SERIAL FUNCS *************************
 
 void RetroPlayer::handshake() {
-    this->read_serial_data();
+    comms_->read_serial_data();
     switch(handshakeState) {
         case none: // Send handshake
-            if (playerIn[PI_AWAKE] == 1) {
+            if (piAwake == 1) {
                 // Send pi all data
-                handshake = 1; // Sending/sent
-                comms.sendData();
+                handshakeData = 1; // Sending/sent
+                comms_->sendData();
                 lastHandshakeTime = millis();
                 handshakeState = sent;
             }
             if ( (lastHandshakeTime + HANDSHAKE_TIMEOUT) > millis() ) {
-                handshake = 3; // No Awake signal received.
-                comms.sendData(&handshake);
+                handshakeData = 3; // No Awake signal received.
+                comms_->sendData(&handshakeData);
                 lastHandshakeTime = millis();
             }
         case sent: // Sent, wait for receive
-            if (playerIn[HANDSHAKE_RECEIVED] == 1) {
-                handshake = 2; // Success
-                comms.sendData(&handshake);
+            if (handshakeReceived == 1) {
+                handshakeData = 2; // Success
+                comms_->sendData(&handshakeData);
                 lastHandshakeTime = millis();
                 handshakeState = success;
             }
             if ( (lastHandshakeTime + HANDSHAKE_TIMEOUT) > millis() ) {
-                handshake = 4; // No Received signal received.
-                comms.sendData(&handshake);
+                handshakeData = 4; // No Received signal received.
+                comms_->sendData(&handshakeData);
                 lastHandshakeTime = millis();
             }
         case success:
             // Handshake confirmed. Check time since last message
             if ( (lastHandshakeTime + HANDSHAKE_TIMEOUT) > millis() ) {
-                playerIn[HANDSHAKE_RECEIVED] = 0; //TODO Don't change playerIn directly
-                handshake = 0; // Require new handshake
+                handshakeReceived = 0;
+                handshakeData = 0; // Require new handshake
                 lastHandshakeTime = millis();
                 handshakeState = none;
             }
@@ -169,11 +131,11 @@ void RetroPlayer::air_horns(byte level) {
 }
 
 void RetroPlayer::check_dig_inputs() {
-    static byte newInputState[NUM_INPUTS];
-    static byte debounce[NUM_INPUTS];
-    static long lastTime[NUM_INPUTS];
+    static byte newInputState[NUM_DIGITAL];
+    static byte debounce[NUM_DIGITAL];
+    static long lastTime[NUM_DIGITAL];
   
-    for (byte i = 0; i < NUM_INPUTS; i++) {
+    for (byte i = 0; i < NUM_DIGITAL; i++) {
         if (millis() < lastTime[i]) {
             lastTime[i] = millis(); // Timer has wrapped around
         }
@@ -185,7 +147,7 @@ void RetroPlayer::check_dig_inputs() {
 
         newInputState[i] = digitalRead(inputs[i]);   // read the input
 
-        if (newInputState[i] == digitalState[i]) {
+        if (newInputState[i] == digitalInStates[i]) {
             if (debounce[i] == 1)  {
                 debounce[i] = 0; // Debounce failed, reset
             }
@@ -193,9 +155,9 @@ void RetroPlayer::check_dig_inputs() {
         }
         if (debounce[i] == 1) {
             debounce[i] = 0; // Debouncing finished, stop debounce
-            digitalState[i] = newInputState[i];
-            CALL_MEMBER_FN(*this, inputCallbacks[i]) (digitalState[i]); // Use #define macro to call input functions
-            comms.sendData(digitalState); // Send inputs when one changes
+            digitalInStates[i] = newInputState[i];
+            CALL_MEMBER_FN(*this, inputCallbacks[i]) (digitalInStates[i]); // Use #define macro to call input functions
+            comms_->sendData(digitalInStates); // Send inputs when one changes
         } else {
             debounce[i] = 1; // Debounce not started, start debounce
         }
@@ -206,10 +168,10 @@ void RetroPlayer::check_dig_inputs() {
 
 void RetroPlayer::check_analogues() {
     int throwaway;
-    int newAnalogueState[NUM_ANALOGUES];
-    int thresholds[NUM_ANALOGUES];
+    int newAnalogueState[NUM_ANALOGS];
+    int thresholds[NUM_ANALOGS];
     // static byte debounce;
-    for (byte i=0; i< NUM_ANALOGUES; i++) {
+    for (byte i=0; i< NUM_ANALOGS; i++) {
         // Ignore first reading to allow capacitor to charge. Especially high impedance pot
         throwaway = analogRead(analogues[i]);
         byte analogueValue = analogRead(analogues[i]);
@@ -230,75 +192,74 @@ void RetroPlayer::check_analogues() {
 void RetroPlayer::display_on(bool wakeup = false) {
     display = 1;
     if (wakeup == true) { return; }
-    comms.sendData(&display);
+    comms_->sendData(&display);
 }
 void RetroPlayer::wakeup() {
     sleepyPi_->enablePiPower(true);
     if (display == 1) {
         if (ignition == 1) {
-            myState = dispOnAuto;
+            powerState = dispOnAuto;
         }
         else
         {
-            myState = dispOnManual;
+            powerState = dispOnManual;
         }
     }
     else
     {
-        myState = dispOff;
+        powerState = dispOff;
     }
 }
 void RetroPlayer::maintenence_mode() { // Cancel analog power setup so i2c can be used
     sleepyPi_->enableExtPower(false);
     pinMode(ANALOGUE_SINK, INPUT);
     mode = 1;
-    comms.sendData(&mode);
+    comms_->sendData(&mode);
 }
 void RetroPlayer::normal_mode() { // Setup analogues to read
     sleepyPi_->enableExtPower(true);
     pinMode(ANALOGUE_SINK, OUTPUT);
     digitalWrite(ANALOGUE_SINK, LOW);
     mode = 0;
-    comms.sendData(&display);
+    comms_->sendData(&display);
 }
 void RetroPlayer::shutdown_request(byte shutdownType = 2) {
     shutdownTime = millis();
-    off = shutdownType; //Shutdown request code (2=auto, 3=manual)
-    comms.sendData(&off);
+    piOff = shutdownType; //Shutdown request code (2=auto, 3=manual)
+    comms_->sendData(&piOff);
     if (shutdownType == 3) {
-        myState = shutdownTimeoutManual;
+        powerState = shutdownTimeoutManual;
     } else {
-        myState = shutdownTimeoutAuto;
+        powerState = shutdownTimeoutAuto;
     }
 }
 void RetroPlayer::shutdown() {
     // Send shutdown signal
-    off = 1;
-    comms.sendData(&off);
+    piOff = 1;
+    comms_->sendData(&piOff);
     shutdownTime = millis();
-    myState = shuttingDown; // Shutdown arduino
+    powerState = shuttingDown; // Shutdown arduino
 }
 
 
 void RetroPlayer::power_control() {
-    switch(myState) { // State machine to control power up sequence
+    switch(powerState) { // State machine to control power up sequence
         case shuttingDown: // Shutting down
             //TODO Add timeout involving piAwake
             piPower = sleepyPi_->checkPiStatus(false);  // Don't Cut Power automatically
             if (piPower == false) {
                 // TODO Clear serial buffer?
                 sleepyPi_->enablePiPower(false);
-                myState = off;
+                powerState = off;
             }
             if ( (shutdownTime + SHUTDOWN_TIMEOUT) > millis() ) {
-                off = 4; // Shutdown not completed
-                comms.sendData(&off);
+                piOff = 4; // Shutdown not completed
+                comms_->sendData(&piOff);
             }
         case off: // Low power state
-             // Attach WAKEUP_PIN to wakeup ATMega
-            attachInterrupt(digitalPinToInterrupt(DOOR_PIN), wakeup_no_display, RISING);
-            attachInterrupt(digitalPinToInterrupt(POWER_SWITCH_PIN), wakeup_manual, RISING);
-            digitalWrite(LED_BUILTIN, LOW); // turn the LED on (HIGH is the voltage level)
+            // Attach WAKEUP_PIN to wakeup ATMega
+            attachInterrupt(digitalPinToInterrupt(DOOR_PIN), wakeup_auto, FALLING);
+            attachInterrupt(digitalPinToInterrupt(POWER_SWITCH_PIN), wakeup_manual, FALLING);
 
             // Enter power down state with ADC and BOD module disabled.
             // Wake up when wake up pins are high.
@@ -306,24 +267,23 @@ void RetroPlayer::power_control() {
             
             // ###################### WOKEN UP ######################
             // Disable external pin interrupts.
-            detachInterrupt(DOOR_PIN);
-            detachInterrupt(POWER_SWITCH_PIN);
-
-            digitalWrite(LED_BUILTIN, HIGH); // turn the LED on
-
+            detachInterrupt(digitalPinToInterrupt(DOOR_PIN));
+            detachInterrupt(digitalPinToInterrupt(POWER_SWITCH_PIN));
+            
+            delay(DEBOUNCE); // Basic blocking debounce
             if (volSwitch == 0) { // If switch is off, go back to sleep.
                 display = 0;
                 break;
             }
 
-            ardOnTime = millis(); // Start timing power on time
+            ardOnTime = millis(); // Record power on time
 
             wakeup(); // Wakeup pi and Set next state based on inputs
         case lowPower: // Arduino on but pi off. Currently unused
             break;
         case dispOff: // Woken up, no display
             // If inputs tripped, turn display on
-            if (ignition == 1 || playerIn[KEEP_ALIVE] == 1) {
+            if (ignition == 1 || keepAlive == 1) {
                 display_on();
                 break;
             }
@@ -343,7 +303,7 @@ void RetroPlayer::power_control() {
             if ((shutdownTime + SHUTDOWN_REQ_TIMEOUT) > millis() ) {
                 shutdown();
             }
-            if (ignition == 1  || playerIn[KEEP_ALIVE] == 1) {
+            if (ignition == 1  || keepAlive == 1) {
                 wakeup(); //Cancel shutdown 
             }
         // *********** Manual on/off (Using vol switch) ***********
@@ -352,21 +312,27 @@ void RetroPlayer::power_control() {
                 shutdown_request();
             }
             if (ignition == 1) {
-                myState = dispOnAuto;
+                powerState = dispOnAuto;
             }
         case shutdownTimeoutManual: // Power switch turned off
             if ((shutdownTime + SHUTDOWN_REQ_TIMEOUT) > millis() ) {
                 shutdown();
             }
-            if (volSwitch == 1 || playerIn[KEEP_ALIVE] == 1) {
+            if (volSwitch == 1 || keepAlive == 1) {
                 wakeup(); // Cancel shutdown 
             }
     }
 }
 
-// isr interrupt callbacks
 
-void wakeup_no_display()
+// ************************* MAIN PROGRAM *************************
+
+SleepyPiClass sleepyPi;
+SerialComms retroComms(NUM_CHARS);
+RetroPlayer retroPlayer(&sleepyPi, &retroComms, NUM_DIGITAL, NUM_ANALOGS, NUM_OUTPUTS);
+
+// isr interrupt callbacks
+void wakeup_auto()
 {
     // Handler for the wakeup interrupt with no display
     // retroPlayer.wake_on_disp();
@@ -379,45 +345,18 @@ void wakeup_manual()
     retroPlayer.display_on(true);
 }
 
-
-
-// ************************* MAIN PROGRAM *************************
-
-SleepyPiClass sleepyPi;
-RetroPlayer retroPlayer;
-SerialComms retroComms(DATA_MEMBERS);
-
 void setup() {
     Serial.begin(9600);
 
     // Set the initial Power to be off
     sleepyPi.enablePiPower(false);  
     sleepyPi.enableExtPower(false);
-
-    // Setup serial data references
-
-    SerialData<byte[NUM_DIGITAL]> serial_digital(digitalState, "dig");
-    retroComms[0] = &serial_digital;
-    SerialData<int[NUM_ANALOG]> serial_analog(analogState, "analog");
-    retroComms[1] = &serial_analog;
-    SerialData<byte> serial_display(&display, "disp");
-    retroComms[2] = &serial_display;
-    SerialData<byte> serial_off(&data1, "off");
-    retroComms[3] = &serial_off;
-    SerialData<byte> serial_mode(&mode, "mode");
-    retroComms[4] = &serial_mode;
-    SerialData<byte> serial_volSwitch(&volSwitch, "volSw");
-    retroComms[5] = &serial_volSwitch;
-    SerialData<byte> serial_handshake(&handshake, "hand");
-    retroComms[6] = &serial_handshake;
-
     
     // Setup inputs. Off is high, on is low
     pinMode(inputs[0], INPUT_PULLUP);
-    digitalWrite(inputs[0], HIGH);  // Pullup for on/off switch
-    for (byte i=1; i< NUM_INPUTS; i++) { //Start at 1 to miss first
+    for (byte i=1; i< NUM_DIGITAL; i++) { //Start at 1 to miss first
         pinMode(inputs[i], INPUT);
-        digitalState[i] = digitalRead(inputs[i]);   // read the inputs
+        digitalInStates[i] = digitalRead(inputs[i]);   // read the inputs
     }
 
     // Setup outputs
@@ -425,6 +364,10 @@ void setup() {
         pinMode(outputs[i], OUTPUT);
         digitalWrite(outputs[i], LOW);  // Set to off
     }
+
+    // Stop 32khz clock output on interrupt line (Power switch)
+    sleepyPi.rtcStop_32768_Clkout();
+    sleepyPi.rtcClearInterrupts();
 }
 
 void loop() {

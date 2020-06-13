@@ -1,35 +1,41 @@
 #ifndef RETROPLAYER_H
 #define RETROPLAYER_H
 
+#include "SerialComms.h"
+#include "LowPower.h"
+#include "PCF8523.h"
+#include "SleepyPi2.h"
+#include <ArduinoJson.h>
+
 class RetroPlayer {
 private:
     SleepyPiClass *sleepyPi_;
-    // byte myState;
+    SerialComms *comms_;
+    byte powerState;
     long lastHandshakeTime;
     long shutdownTime;
     long ardOnTime;
     bool piPower;
+    byte numDigIns;
+    byte numAnalIns;
+    byte numDigOuts;
 
-    boolean digitalState[];
-    int analogState[];
+    boolean *digitalInStates; // Array stored as pointer
+    int *analogInStates; // Array stored as pointer
+    
     byte display;
-    byte off; //FIXME
+    byte piOff;
     byte mode;
     boolean volSwitch; //Is needed?
-    byte handshake;
+    byte handshakeData;
+
+    boolean *digitalOutStates; // Array stored as pointer
+    byte piAwake;
+    byte handshakeReceived;
+    byte keepAlive;
 
     byte ignition;
-    byte intLights;
-
-    void read_serial_data();
-    void process_serial_data(char serialData[]);
-
-    void power_switch(byte level);
-    void door_light(byte level);
-    void ignition_func(byte level);
-    void boot_release_but(byte level);
-    void spare_in(byte level);
-    void air_horns(byte level);
+    byte intLights; // FIXME Needed?
 
     enum PlayerState {
         shuttingDown, off, lowPower, dispOff, dispOnAuto, dispOnManual, shutdownTimeoutAuto, shutdownTimeoutManual
@@ -37,6 +43,13 @@ private:
     enum Handshake {
         none, sent, success, failed
     } handshakeState;
+
+    void power_switch(byte level);
+    void door_light(byte level);
+    void ignition_func(byte level);
+    void boot_release_but(byte level);
+    void spare_in(byte level);
+    void air_horns(byte level);
 
     typedef void (RetroPlayer::*ioFunction)(byte);
     // array of function pointers
@@ -50,6 +63,8 @@ private:
     };
 
 public:
+    RetroPlayer(SleepyPiClass *sleepyPi, SerialComms *comms, byte digitalIns, byte analogIns, byte digitalOuts);
+    ~RetroPlayer();
     void power_control();
     void handshake();
     void wake_on_disp();
@@ -66,10 +81,7 @@ public:
 
     // void wakeup_manual();
     // void wakeup_no_display();
-    RetroPlayer() {
-        myState = off;
-        handshakeState = none;
-    }
+    // RetroPlayer() : myState{off}, handshakeState{none} {}
 };
 
 #endif

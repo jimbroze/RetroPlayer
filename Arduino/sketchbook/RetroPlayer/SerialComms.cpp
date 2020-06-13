@@ -1,6 +1,6 @@
-#include "SerialCommsTest.h"
+#include "SerialComms.h"
 
-SerialComms::SerialComms(byte chars) : dataOutSize{0}, dataInSize{0}, numChars{chars}
+SerialComms::SerialComms(byte bufferChars) : numChars{bufferChars}
 {
     commsOutData = new SerialData_Base *[1];
     commsInData = new SerialData_Base *[1];
@@ -24,8 +24,8 @@ void SerialComms::addOutData(T *outData, const char *key)
     commsOutData[dataOutSize] = new SerialData<T>(outData, key);
     dataOutSize++;
 }
-template <class T, byte arrLength>
-void SerialComms::addOutData(T (&outData)[arrLength], byte arrSize, const char *key)
+template <class T>
+void SerialComms::addOutData(T *outData, byte arrSize, const char *key)
 {
     if (dataOutSize > 0)
     {
@@ -39,8 +39,14 @@ void SerialComms::addOutData(T (&outData)[arrLength], byte arrSize, const char *
     
         commsOutData = newOutData;
     }
-    commsOutData[dataOutSize] = new SerialData<T[arrLength]>(outData, key);
+    commsOutData[dataOutSize] = new SerialData<T[arrSize]>(outData, key);
     dataOutSize++;
+
+    if (arrSize > maxOutArrSize)
+    {
+        maxOutArrSize = arrSize;
+    }
+    numOutArrs++;
 }
 
 
@@ -62,8 +68,8 @@ void SerialComms::addInData(T *inData, const char *key)
     commsInData[dataInSize] = new SerialData<T>(inData, key);
     dataInSize++;
 }
-template <class T, byte arrLength>
-void SerialComms::addInData(T (&inData)[arrLength], byte arrSize, const char *key)
+template <class T>
+void SerialComms::addInData(T *inData, byte arrSize, const char *key)
 {
     if (dataInSize > 0)
     {
@@ -77,8 +83,14 @@ void SerialComms::addInData(T (&inData)[arrLength], byte arrSize, const char *ke
     
         commsInData = newInData;
     }
-    commsInData[dataInSize] = new SerialData<T[arrLength]>(inData, key);
+    commsInData[dataInSize] = new SerialData<T[arrSize]>(inData, key);
     dataInSize++;
+
+    if (arrSize > maxInArrSize)
+    {
+        maxInArrSize = arrSize;
+    }
+    numInArrs++;
 }
 
 void SerialComms::read_serial_data() {
@@ -108,7 +120,8 @@ void SerialComms::read_serial_data() {
 }
 
 void SerialComms::process_serial_data(char serialData[]) {
-    StaticJsonDocument<SERIAL_IN_CAPACITY> doc;
+    int capacity = JSON_OBJECT_SIZE(dataInSize) + numInArrs * JSON_ARRAY_SIZE(maxInArrSize);
+    DynamicJsonDocument doc(capacity);
     DeserializationError error = deserializeJson(doc, serialData);
     if (error) {
         // send_serial("errSer", error.c_str());
@@ -180,7 +193,8 @@ void SerialComms::sendData(T (&data_p)[arrLength])
 
 void SerialComms::sendData() // Dict
 {
-    StaticJsonDocument<SERIAL_OUT_CAPACITY> fullDoc;
+    int capacity = JSON_OBJECT_SIZE(dataOutSize) + numOutArrs * JSON_ARRAY_SIZE(maxOutArrSize);
+    DynamicJsonDocument fullDoc(capacity);
     JsonObject fullDocObj = fullDoc.to<JsonObject>();
 
     for (byte i{0}; i < dataOutSize; i++)
@@ -229,8 +243,8 @@ void SerialData<T>::send()
 template <class T, byte arrLength>
 void SerialData<T[arrLength]>::send()
 {
-    constexpr int capacity = JSON_OBJECT_SIZE(1) + JSON_ARRAY_SIZE(MAX_DATA_ARRAY);
-    StaticJsonDocument<capacity> doc;
+    int capacity = JSON_OBJECT_SIZE(1) + JSON_ARRAY_SIZE(arrSize);
+    DynamicJsonDocument doc(capacity);
     JsonObject docObj = doc.to<JsonObject>();
     for (byte i {0}; i < arrLength; i++)
     {
