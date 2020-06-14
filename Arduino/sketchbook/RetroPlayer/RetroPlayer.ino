@@ -1,15 +1,13 @@
-#include "RetroPlayer.h"
-#include "SerialComms.h"
-
 constexpr byte NUM_DIGITAL {6};
 constexpr byte NUM_OUTPUTS {3};
 constexpr byte NUM_ANALOGS {4};
 
+#include "RetroPlayer.h"
+#include "SerialComms.h"
+
 // If size 3 object includes size 2 array
 const byte NUM_CHARS = 64; //Increase if required for more data.
 // Serial buffer is 64 bytes but program should read faster than buffer
-
-
 
 #define CALL_MEMBER_FN(object,ptrToMember)  ((object).*(ptrToMember)) //FIXME Is this needed?
 
@@ -18,32 +16,29 @@ void wakeup_auto();
 
 const byte DEBOUNCE = 10;  // input debouncer (ms)
  
-const byte POWER_SWITCH_PIN = 2;	// Pin B0 - Arduino 8
-const byte DOOR_PIN = 3;	// Pin B0 - Arduino 8
+constexpr byte POWER_SWITCH_PIN = 2; //int 0?
+constexpr byte DOOR_PIN = 3; //int 1?
 const unsigned int POWER_ON_TIMEOUT = 30 * 1000; // Seconds to millis
-const unsigned int HANDSHAKE_TIMEOUT = 30 * 1000; // Seconds
-const unsigned int SHUTDOWN_REQ_TIMEOUT = 30 * 1000; // Seconds
-const unsigned int SHUTDOWN_TIMEOUT = 30 * 1000; // Seconds
+const unsigned int HANDSHAKE_TIMEOUT = 30 * 1000; // Seconds to millis
+const unsigned int SHUTDOWN_REQ_TIMEOUT = 30 * 1000; // Seconds to millis
+const unsigned int SHUTDOWN_TIMEOUT = 30 * 1000; // Seconds to millis
 
-byte inputs[NUM_DIGITAL] = {2, 3, 5, 6, 11, 12};
-byte outputs[NUM_OUTPUTS] = {7, 10, 13};
-byte analogues[NUM_ANALOGS][2] = {"A0", "A1", "A4", "A5"};
-byte ANALOGUE_SINK = 9;
+constexpr byte inputs[NUM_DIGITAL] = {2, 3, 5, 6, 11, 12};
+constexpr byte outputs[NUM_OUTPUTS] = {7, 10, 13};
+constexpr byte analogues[NUM_ANALOGS][2] = {"A0", "A1", "A4", "A5"};
+constexpr byte ANALOGUE_SINK = 9;
 byte ANALOGUE_AVERAGES = 6; // Even no. so that jumps between 2 numbers are centralised
-
-byte digitalInStates[NUM_DIGITAL];
-byte outputState[NUM_OUTPUTS];
-byte analogueState[NUM_ANALOGS];
 
 // Single values:
 // errSer = Serial error (String)
 
 
-RetroPlayer::RetroPlayer(SleepyPiClass *sleepyPi, SerialComms *comms, byte digitalIns, byte analogIns, byte digitalOuts) : myState{off}, handshakeState{none}, sleepyPi_{sleepyPi}, comms_{comms}, numDigIns{digitalIns}, numAnalIns{analogIns}, numDigOuts{digitalOuts}
+// template <byte digitalIns, byte analogIns, byte digitalOuts>
+RetroPlayer::RetroPlayer(SleepyPiClass *sleepyPi, SerialComms *comms, byte digitalIns, byte analogIns, byte digitalOuts) : myState{off}, handshakeState{none}, sleepyPi_{sleepyPi}, comms_{comms}, numDigIns{digitalIns}, numAnalIns{analogIns}, numDigOuts{digitalOuts}, digitalInStates{}, analogInStates{}, digitalOutStates{}
 {
-    digitalInStates = { new boolean[numDigIns] };
-    analogInStates = { new int[numAnalIns] };
-    digitalOutStates = { new boolean[numDigOuts] };
+    // digitalInStates = { new boolean[numDigIns] };
+    // analogInStates = { new int[numAnalIns] };
+    // digitalOutStates = { new boolean[numDigOuts] };
 
     // Setup serial data references
     comms_->addOutData(digitalInStates, NUM_DIGITAL, "dig");
@@ -107,7 +102,21 @@ void RetroPlayer::handshake() {
     }
 }
 
+void RetroPlayer::setup()
+{
+    // Setup inputs. Off is high, on is low
+    pinMode(inputs[0], INPUT_PULLUP);
+    for (byte i=1; i< NUM_DIGITAL; i++) { //Start at 1 to miss first
+        pinMode(inputs[i], INPUT);
+        digitalInStates[i] = digitalRead(inputs[i]);   // read the inputs
+    }
 
+    // Setup outputs
+    for (byte i=0; i< NUM_OUTPUTS; i++) {
+        pinMode(outputs[i], OUTPUT);
+        digitalWrite(outputs[i], LOW);  // Set to off
+    }
+}
 
 // ************************* HARDWARE IO *************************
 
@@ -180,9 +189,9 @@ void RetroPlayer::check_analogues() {
             analogueValue = analogRead(analogues[i]);
         }
         newAnalogueState[i] = analogueValue / ANALOGUE_AVERAGES;
-        int diff = newAnalogueState[i] - analogueState[i];
+        int diff = newAnalogueState[i] - analogInStates[i];
         if (abs(diff) > thresholds[i]) {
-            analogueState[i] = newAnalogueState[i];
+            analogInStates[i] = newAnalogueState[i];
         }
     }
 }
@@ -351,19 +360,8 @@ void setup() {
     // Set the initial Power to be off
     sleepyPi.enablePiPower(false);  
     sleepyPi.enableExtPower(false);
-    
-    // Setup inputs. Off is high, on is low
-    pinMode(inputs[0], INPUT_PULLUP);
-    for (byte i=1; i< NUM_DIGITAL; i++) { //Start at 1 to miss first
-        pinMode(inputs[i], INPUT);
-        digitalInStates[i] = digitalRead(inputs[i]);   // read the inputs
-    }
 
-    // Setup outputs
-    for (byte i=0; i< NUM_OUTPUTS; i++) {
-        pinMode(outputs[i], OUTPUT);
-        digitalWrite(outputs[i], LOW);  // Set to off
-    }
+    retroPlayer.setup(); //Setup hardware pins
 
     // Stop 32khz clock output on interrupt line (Power switch)
     sleepyPi.rtcStop_32768_Clkout();

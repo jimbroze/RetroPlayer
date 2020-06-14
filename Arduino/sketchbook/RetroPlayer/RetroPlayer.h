@@ -20,8 +20,8 @@ private:
     byte numAnalIns;
     byte numDigOuts;
 
-    boolean *digitalInStates; // Array stored as pointer
-    int *analogInStates; // Array stored as pointer
+    boolean digitalInStates[NUM_DIGITAL]; // Array stored as pointer
+    int analogInStates[NUM_OUTPUTS]; // Array stored as pointer
     
     byte display;
     byte piOff;
@@ -29,7 +29,7 @@ private:
     boolean volSwitch; //Is needed?
     byte handshakeData;
 
-    boolean *digitalOutStates; // Array stored as pointer
+    boolean digitalOutStates[NUM_OUTPUTS]; // Array stored as pointer
     byte piAwake;
     byte handshakeReceived;
     byte keepAlive;
@@ -65,6 +65,7 @@ private:
 public:
     RetroPlayer(SleepyPiClass *sleepyPi, SerialComms *comms, byte digitalIns, byte analogIns, byte digitalOuts);
     ~RetroPlayer();
+    void setup();
     void power_control();
     void handshake();
     void wake_on_disp();
