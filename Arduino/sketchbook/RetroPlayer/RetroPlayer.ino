@@ -1,18 +1,8 @@
-constexpr byte NUM_DIGITAL {6};
-constexpr byte NUM_OUTPUTS {3};
-constexpr byte NUM_ANALOGS {4};
-
 #include "RetroPlayer.h"
 #include "SerialComms.h"
 
-// If size 3 object includes size 2 array
 const byte NUM_CHARS = 64; //Increase if required for more data.
 // Serial buffer is 64 bytes but program should read faster than buffer
-
-#define CALL_MEMBER_FN(object,ptrToMember)  ((object).*(ptrToMember)) //FIXME Is this needed?
-
-void wakeup_manual();
-void wakeup_auto();
 
 const byte DEBOUNCE = 10;  // input debouncer (ms)
  
@@ -23,9 +13,9 @@ const unsigned int HANDSHAKE_TIMEOUT = 30 * 1000; // Seconds to millis
 const unsigned int SHUTDOWN_REQ_TIMEOUT = 30 * 1000; // Seconds to millis
 const unsigned int SHUTDOWN_TIMEOUT = 30 * 1000; // Seconds to millis
 
-constexpr byte inputs[NUM_DIGITAL] = {2, 3, 5, 6, 11, 12};
-constexpr byte outputs[NUM_OUTPUTS] = {7, 10, 13};
-constexpr byte analogues[NUM_ANALOGS][2] = {"A0", "A1", "A4", "A5"};
+constexpr byte inputs[] = {2, 3, 5, 6, 11, 12};
+constexpr byte outputs[] = {7, 10, 13};
+constexpr byte analogues[][2] = {"A0", "A1", "A4", "A5"};
 constexpr byte ANALOGUE_SINK = 9;
 byte ANALOGUE_AVERAGES = 6; // Even no. so that jumps between 2 numbers are centralised
 
@@ -33,12 +23,18 @@ byte ANALOGUE_AVERAGES = 6; // Even no. so that jumps between 2 numbers are cent
 // errSer = Serial error (String)
 
 
-// template <byte digitalIns, byte analogIns, byte digitalOuts>
-RetroPlayer::RetroPlayer(SleepyPiClass *sleepyPi, SerialComms *comms, byte digitalIns, byte analogIns, byte digitalOuts) : myState{off}, handshakeState{none}, sleepyPi_{sleepyPi}, comms_{comms}, numDigIns{digitalIns}, numAnalIns{analogIns}, numDigOuts{digitalOuts}, digitalInStates{}, analogInStates{}, digitalOutStates{}
+constexpr byte NUM_DIGITAL = sizeof(inputs) / sizeof(inputs[0]);
+constexpr byte NUM_OUTPUTS = sizeof(outputs) / sizeof(outputs[0]);
+constexpr byte NUM_ANALOGS = sizeof(analogues) / sizeof(analogues[0]);
+
+#define CALL_MEMBER_FN(object,ptrToMember)  ((object).*(ptrToMember))
+
+void wakeup_manual();
+void wakeup_auto();
+
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+RetroPlayer<digitalIns, analogIns, digitalOuts>::RetroPlayer(SleepyPiClass *sleepyPi, SerialComms *comms) : myState{off}, handshakeState{none}, sleepyPi_{sleepyPi}, comms_{comms}, numDigIns{digitalIns}, numAnalIns{analogIns}, numDigOuts{digitalOuts}, digitalInStates{}, analogInStates{}, digitalOutStates{}
 {
-    // digitalInStates = { new boolean[numDigIns] };
-    // analogInStates = { new int[numAnalIns] };
-    // digitalOutStates = { new boolean[numDigOuts] };
 
     // Setup serial data references
     comms_->addOutData(digitalInStates, NUM_DIGITAL, "dig");
@@ -46,7 +42,6 @@ RetroPlayer::RetroPlayer(SleepyPiClass *sleepyPi, SerialComms *comms, byte digit
     comms_->addOutData(&display, "disp");
     comms_->addOutData(&piOff, "off");
     comms_->addOutData(&mode, "mode");
-    comms_->addOutData(&volSwitch, "volSw");
     comms_->addOutData(&handshakeData, "hand");
 
     comms_->addInData(digitalOutStates, NUM_OUTPUTS, "out");
@@ -54,7 +49,8 @@ RetroPlayer::RetroPlayer(SleepyPiClass *sleepyPi, SerialComms *comms, byte digit
     comms_->addInData(&handshakeReceived, "hand");
     comms_->addInData(&keepAlive, "alive");
 }
-RetroPlayer::~RetroPlayer()
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+RetroPlayer<digitalIns, analogIns, digitalOuts>::~RetroPlayer()
 {
     delete[] digitalInStates;
     delete[] analogInStates;
@@ -63,7 +59,8 @@ RetroPlayer::~RetroPlayer()
 
 // ************************* SERIAL FUNCS *************************
 
-void RetroPlayer::handshake() {
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+void RetroPlayer<digitalIns, analogIns, digitalOuts>::handshake() {
     comms_->read_serial_data();
     switch(handshakeState) {
         case none: // Send handshake
@@ -102,7 +99,10 @@ void RetroPlayer::handshake() {
     }
 }
 
-void RetroPlayer::setup()
+// ************************* HARDWARE IO *************************
+
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+void RetroPlayer<digitalIns, analogIns, digitalOuts>::setup()
 {
     // Setup inputs. Off is high, on is low
     pinMode(inputs[0], INPUT_PULLUP);
@@ -118,28 +118,33 @@ void RetroPlayer::setup()
     }
 }
 
-// ************************* HARDWARE IO *************************
-
-void RetroPlayer::power_switch(byte level) {
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+void RetroPlayer<digitalIns, analogIns, digitalOuts>::power_switch(byte level) {
     volSwitch = level;
 }
-void RetroPlayer::door_light(byte level) {
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+void RetroPlayer<digitalIns, analogIns, digitalOuts>::door_light(byte level) {
     intLights = level;
 }
-void RetroPlayer::ignition_func(byte level) {
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+void RetroPlayer<digitalIns, analogIns, digitalOuts>::ignition_func(byte level) {
     ignition = level;
 }
-void RetroPlayer::boot_release_but(byte level) {
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+void RetroPlayer<digitalIns, analogIns, digitalOuts>::boot_release_but(byte level) {
     return;
 }
-void RetroPlayer::spare_in(byte level) {
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+void RetroPlayer<digitalIns, analogIns, digitalOuts>::spare_in(byte level) {
     return;
 }
-void RetroPlayer::air_horns(byte level) {
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+void RetroPlayer<digitalIns, analogIns, digitalOuts>::air_horns(byte level) {
     return;
 }
 
-void RetroPlayer::check_dig_inputs() {
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+void RetroPlayer<digitalIns, analogIns, digitalOuts>::check_dig_inputs() {
     static byte newInputState[NUM_DIGITAL];
     static byte debounce[NUM_DIGITAL];
     static long lastTime[NUM_DIGITAL];
@@ -175,7 +180,9 @@ void RetroPlayer::check_dig_inputs() {
     }
 }
 
-void RetroPlayer::check_analogues() {
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+void RetroPlayer<digitalIns, analogIns, digitalOuts>::check_analogues()
+{
     int throwaway;
     int newAnalogueState[NUM_ANALOGS];
     int thresholds[NUM_ANALOGS];
@@ -196,14 +203,25 @@ void RetroPlayer::check_analogues() {
     }
 }
 
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+void RetroPlayer<digitalIns, analogIns, digitalOuts>::set_outputs()
+{
+    for (byte i = 0; i < NUM_OUTPUTS; i++)
+    {
+        digitalWrite(outputs[i], digitalOutStates[i]);
+    }
+}
+
 // **************** STATE FUNCTIONS AND MACHINE ****************
 
-void RetroPlayer::display_on(bool wakeup = false) {
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+void RetroPlayer<digitalIns, analogIns, digitalOuts>::display_on(bool wakeup = false) {
     display = 1;
     if (wakeup == true) { return; }
     comms_->sendData(&display);
 }
-void RetroPlayer::wakeup() {
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+void RetroPlayer<digitalIns, analogIns, digitalOuts>::wakeup() {
     sleepyPi_->enablePiPower(true);
     if (display == 1) {
         if (ignition == 1) {
@@ -219,20 +237,23 @@ void RetroPlayer::wakeup() {
         powerState = dispOff;
     }
 }
-void RetroPlayer::maintenence_mode() { // Cancel analog power setup so i2c can be used
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+void RetroPlayer<digitalIns, analogIns, digitalOuts>::maintenence_mode() { // Cancel analog power setup so i2c can be used
     sleepyPi_->enableExtPower(false);
     pinMode(ANALOGUE_SINK, INPUT);
     mode = 1;
     comms_->sendData(&mode);
 }
-void RetroPlayer::normal_mode() { // Setup analogues to read
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+void RetroPlayer<digitalIns, analogIns, digitalOuts>::normal_mode() { // Setup analogues to read
     sleepyPi_->enableExtPower(true);
     pinMode(ANALOGUE_SINK, OUTPUT);
     digitalWrite(ANALOGUE_SINK, LOW);
     mode = 0;
     comms_->sendData(&display);
 }
-void RetroPlayer::shutdown_request(byte shutdownType = 2) {
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+void RetroPlayer<digitalIns, analogIns, digitalOuts>::shutdown_request(byte shutdownType = 2) {
     shutdownTime = millis();
     piOff = shutdownType; //Shutdown request code (2=auto, 3=manual)
     comms_->sendData(&piOff);
@@ -242,7 +263,8 @@ void RetroPlayer::shutdown_request(byte shutdownType = 2) {
         powerState = shutdownTimeoutAuto;
     }
 }
-void RetroPlayer::shutdown() {
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+void RetroPlayer<digitalIns, analogIns, digitalOuts>::shutdown() {
     // Send shutdown signal
     piOff = 1;
     comms_->sendData(&piOff);
@@ -250,8 +272,8 @@ void RetroPlayer::shutdown() {
     powerState = shuttingDown; // Shutdown arduino
 }
 
-
-void RetroPlayer::power_control() {
+template <byte digitalIns, byte analogIns, byte digitalOuts>
+void RetroPlayer<digitalIns, analogIns, digitalOuts>::power_control() {
     switch(powerState) { // State machine to control power up sequence
         case shuttingDown: // Shutting down
             //TODO Add timeout involving piAwake
@@ -338,7 +360,7 @@ void RetroPlayer::power_control() {
 
 SleepyPiClass sleepyPi;
 SerialComms retroComms(NUM_CHARS);
-RetroPlayer retroPlayer(&sleepyPi, &retroComms, NUM_DIGITAL, NUM_ANALOGS, NUM_OUTPUTS);
+RetroPlayer<NUM_DIGITAL, NUM_ANALOGS, NUM_OUTPUTS> retroPlayer(&sleepyPi, &retroComms);
 
 // isr interrupt callbacks
 void wakeup_auto()
@@ -373,5 +395,6 @@ void loop() {
     // Controllers check state during following functions
     retroPlayer.check_dig_inputs();
     retroPlayer.check_analogues();
+    retroPlayer.set_outputs();
     retroPlayer.handshake();
 }
