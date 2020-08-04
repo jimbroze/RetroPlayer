@@ -12,8 +12,7 @@ class RetroPlayer {
 private:
     SleepyPiClass *sleepyPi_;
     SerialComms *comms_;
-    byte powerState;
-    long lastHandshakeTime;
+    long lastHandshakeTime = 0;
     long shutdownTime;
     long ardOnTime;
     bool piPower;
@@ -41,7 +40,7 @@ private:
 
     enum PlayerState {
         shuttingDown, off, lowPower, dispOff, dispOnAuto, dispOnManual, shutdownTimeoutAuto, shutdownTimeoutManual
-    } myState;
+    } powerState;
     enum Handshake {
         none, sent, success, failed
     } handshakeState;

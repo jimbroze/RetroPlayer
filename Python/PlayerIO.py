@@ -164,27 +164,30 @@ class MultiplexInput:
                     self.playerio.setOutPin(pin, 1)
                 await asyncio.sleep((DEBOUNCE_TIME + PAUSE_TIME) / 1000000)
                 self.state = 0
-                logging.info(f"MULTIPLEXER: Inpin was {inPin}, OutPin {outPin}")
-                return self.multiCallback(self.inPins.index(inPin), idx + 1)
+                logging.debug(f"MULTIPLEXER: Inpin was {inPin}, OutPin {outPin}")
+                self.multiCallback[idx + 1][self.inPins.index(inPin)]()
+                return
         # If input level does not change, output is hardwired (0)
         for pin in self.outPins:
             self.playerio.setOutPin(pin, 1)
         await asyncio.sleep((DEBOUNCE_TIME + (1 * 1000)) / 1000000)
         self.state = 0
-        logging.info(f"MULTIPLEXER: Inpin was {inPin}, OutPin was Hardwired")
-        return self.multiCallback(inPin, 0)
+        logging.debug(f"MULTIPLEXER: Inpin was {inPin}, OutPin was Hardwired")
+        self.multiCallback[0][self.inPins.index(inPin)]()
 
 
 class SleepyPi:
     """ """
 
-    def __init__(self, url="/dev/ttyS0"):
+    # Serial port is swapped when not using onboard bluetooth
+    def __init__(self, url="/dev/ttyAMA0"):
         self.url = url
 
     async def setup(self):
         self.reader, self.writer = await serial_asyncio.open_serial_connection(
-            url=self.url, baudrate=115200
+            url=self.url, baudrate=9600
         )
+        logging.info("Setting up Arduino communications.")
 
         await self.receive()
 
@@ -199,6 +202,8 @@ class SleepyPi:
     async def receive(self):
         while True:
             # Give control to event loop until data is received
-            msg = await self.reader.readuntil(b"\n")
+            msg = await self.reader.readuntil(b"}")
+            # TODO Send a re-request if data is not received properly
+            # msg = await self.reader.readline()
             data = json.loads(msg.decode("utf-8"))
             logging.debug(f"received: {data}")

@@ -23,6 +23,10 @@ import dbus.service
 import dbus.mainloop.glib
 
 import logging
+import json
+import time
+from functools import partial
+import asyncio
 
 SERVICE_NAME = "org.bluez"
 AGENT_IFACE = SERVICE_NAME + ".Agent1"
@@ -33,6 +37,11 @@ TRANSPORT_IFACE = SERVICE_NAME + ".MediaTransport1"
 IFACE = "org.freedesktop.DBus"
 MANAGER_IFACE = IFACE + ".ObjectManager"
 PROP_IFACE = IFACE + ".Properties"
+
+
+async def event_setter(connectingEvent):
+    connectingEvent.set()
+
 
 """Utility functions from bluezutils.py"""
 
@@ -59,9 +68,9 @@ class BlueHandler(dbus.service.Object):
     """A class that handles media player bluetooth operations. Takes dbus object,
     media player object and bluetooth io capability as arguments."""
 
-    AGENT_PATH = "/CarPooter/agent"
+    AGENT_PATH = "/RetroPlayer/agent"
     #    CAPABILITY = "DisplayOnly"
-    capability = "NoInputNoOutput"
+    capability = None
 
     bus = None
     adapter = None
@@ -73,16 +82,36 @@ class BlueHandler(dbus.service.Object):
     state = None
     status = None
     discoverable = None
+    discoverTimeout = None
     track = None
-    mainloop = None
+    mainLoop = None
+    connecting = False
+    # connectingEvent = asyncio.Event()
 
-    def __init__(self, bus, updatePlayer, capability="NoInputNoOutput"):
+    def __init__(
+        self,
+        bus,
+        loop,
+        updatePlayer,
+        capability="NoInputNoOutput",
+        discoverTimeout="180",
+    ):
         """Initialize gobject and find any current media players"""
         self.capability = capability
-        self.updatePlayer = updatePlayer
+        self.update_player = updatePlayer
         self.bus = bus
+        self.discoverTimeout = discoverTimeout
+        self.mainLoop = loop
+
+        # asyncio.ensure_future(self.setup_async(), loop=self.mainLoop)
 
         dbus.service.Object.__init__(self, bus, BlueHandler.AGENT_PATH)
+
+        # self.bus.add_signal_receiver(
+        #     self.interfaces_added,
+        #     dbus_interface=MANAGER_IFACE,
+        #     signal_name="InterfacesAdded",
+        # )
 
         self.bus.add_signal_receiver(
             self.signal_handler,
@@ -92,20 +121,20 @@ class BlueHandler(dbus.service.Object):
             path_keyword="path",
         )
 
-        self.registerAgent()
-        self.findPlayer()
+        self.register_agent()
+        self.adapter = find_adapter()
+        self.find_player()
 
-        # adapter_path = find_adapter().object_path
-        # self.bus.add_signal_receiver(
-        #     self.signal_handler,
-        #     bus_name="org.bluez",
-        #     path=adapter_path,
-        #     dbus_interface=PROP_IFACE,
-        #     signal_name="PropertiesChanged",
-        #     path_keyword="path",
-        # )
+        # self.adapter.StartDiscovery()
+        # time.sleep(5)
+        # objects = get_managed_objects()
 
-    def registerAgent(self):
+        # print(json.dumps(objects, indent=4))
+
+        if self.device == None:
+            asyncio.ensure_future(self.connect_devices(), loop=self.mainLoop)
+
+    def register_agent(self):
         """Register BlueHandler as the default agent"""
         manager = dbus.Interface(
             self.bus.get_object(SERVICE_NAME, "/org/bluez"), "org.bluez.AgentManager1"
@@ -114,12 +143,12 @@ class BlueHandler(dbus.service.Object):
         manager.RequestDefaultAgent(BlueHandler.AGENT_PATH)
         logging.debug("BlueHandler is registered as the default agent")
 
-    def findPlayer(self):
+    def find_player(self):
         """Find any current media players and associated device"""
-        manager = dbus.Interface(
-            self.bus.get_object(SERVICE_NAME, "/"), "org.freedesktop.DBus.ObjectManager"
-        )
-        objects = manager.GetManagedObjects()
+
+        objects = get_managed_objects()
+
+        # print(json.dumps(objects, indent=4))
 
         player_path = None
         transport_path = None
@@ -130,9 +159,9 @@ class BlueHandler(dbus.service.Object):
                 transport_path = path
 
         if player_path:
-            logging.debug("Found player on path [{}]".format(player_path))
+            logging.debug(f"Found player on path [{player_path}]")
             self.connected = True
-            self.getPlayer(player_path)
+            self.get_player(player_path)
             player_properties = self.player.GetAll(
                 PLAYER_IFACE, dbus_interface=PROP_IFACE
             )
@@ -142,67 +171,125 @@ class BlueHandler(dbus.service.Object):
                 self.track = player_properties["Track"]
         else:
             logging.debug("Could not find player")
+            self.player = None
 
         if transport_path:
-            logging.debug("Found transport on path [{}]".format(player_path))
+            logging.debug(f"Found transport on path [{transport_path}]")
             self.transport = self.bus.get_object(SERVICE_NAME, transport_path)
-            logging.debug("Transport [{}] has been set".format(transport_path))
+            logging.debug(f"Transport [{transport_path}] has been set")
             transport_properties = self.transport.GetAll(
                 TRANSPORT_IFACE, dbus_interface=PROP_IFACE
             )
             if "State" in transport_properties:
                 self.state = transport_properties["State"]
 
-    def getPlayer(self, path):
+    def reply_handler(self, devicePath, connectingEvent):
+        logging.info(f"successfully connected to device: {devicePath}")
+        self.connected = True
+        # remove_pending_connection(device_path)
+        asyncio.run_coroutine_threadsafe(event_setter(connectingEvent), self.mainLoop)
+
+    def error_handler(self, e, devicePath, connectingEvent):
+        self.connected = False
+        logging.warning(
+            f"Error connecting to device: {devicePath}. Error: {e.get_dbus_message()}"
+        )
+        asyncio.run_coroutine_threadsafe(event_setter(connectingEvent), self.mainLoop)
+
+    async def connect_devices(self):
+        self.connecting = True
+        connectingEvent = asyncio.Event()
+        objects = get_managed_objects()
+        for path, ifaces in objects.items():
+            connectingEvent.clear()
+            deviceData = ifaces.get(DEVICE_IFACE)
+            if deviceData is None:
+                continue
+            device = dbus.Interface(
+                self.bus.get_object(SERVICE_NAME, path), DEVICE_IFACE
+            )
+            logging.debug(f"trying to connect to {path}")
+            device.Connect(
+                reply_handler=partial(
+                    self.reply_handler, devicePath=path, connectingEvent=connectingEvent
+                ),
+                error_handler=partial(
+                    self.error_handler, devicePath=path, connectingEvent=connectingEvent
+                ),
+            )
+            # await self.waiting_func(connectingEvent)
+            await connectingEvent.wait()
+            # await connectingEvent.wait()
+            if self.connected == True:
+                self.connecting = False
+                logging.debug("Successfully connected")
+                return
+        await asyncio.sleep(3)  # Wait for connected status to stabilise
+        logging.debug("Could not connect to any devices")
+        self.connecting = False
+        # raise Exception("????")
+
+    def get_player(self, path):
         """Get a media player from a dbus path, and the associated device"""
         self.player = self.bus.get_object(SERVICE_NAME, path)
         logging.debug("Player [{}] has been set".format(path))
         device_path = self.player.Get(
             "org.bluez.MediaPlayer1", "Device", dbus_interface=PROP_IFACE,
         )
-        self.getDevice(device_path)
+        self.get_device(device_path)
 
-    def getDevice(self, path):
-        """Get a device from a dbus path"""
+    def get_device(self, path):
+        """Get a device from a dbus path """
         self.device = self.bus.get_object(SERVICE_NAME, path)
         self.deviceAlias = self.device.Get(
             DEVICE_IFACE, "Alias", dbus_interface=PROP_IFACE
         )
 
+    def interfaces_added(self, path, interfaces):
+        print(path)
+        print(json.dumps(interfaces, indent=4))
+
     def signal_handler(self, interface, changed, invalidated, path):
         """Handle relevant property change signals"""
-        logging.debug(
-            "Interface [{}] changed [{}] on path [{}]".format(interface, changed, path)
-        )
+        logging.debug(f"Interface [{interface}] changed [{changed}] on path [{path}]")
         iface = interface[interface.rfind(".") + 1 :]
         if "Connected" in changed:
             self.connected = changed["Connected"]
+            if changed["Connected"] == False:
+                # FIXME check if anything trying to connect?
+                if self.connecting == False:
+                    asyncio.ensure_future(self.connect_devices(), loop=self.mainLoop)
             if iface == "MediaControl1":
-                self.findPlayer()
+                self.find_player()
+                self.update_player("Connected", [self.connected, self.deviceAlias])
         if "State" in changed:
             self.state = changed["State"]
+            self.update_player("State", self.state)
         if "Track" in changed:
             self.track = changed["Track"]
+            self.update_player("Track", self.track)
         if "Status" in changed:
             self.status = changed["Status"]
+            self.update_player("Status", self.status)
         if "Discoverable" in changed:
             self.discoverable = changed["Discoverable"]
+            self.update_player("Discoverable", self.discoverable)
 
-        # self.updatePlayer()
-
-    # TODO timeout?
-    def setDiscoverable(self, on=True):
+    def set_discoverable(self, on=True):
         """Make the adapter discoverable"""
-        adapter_path = find_adapter().object_path
+        adapter_path = self.adapter.object_path
         adapter = dbus.Interface(
             self.bus.get_object(SERVICE_NAME, adapter_path), PROP_IFACE,
+        )
+        adapter.Set(
+            ADAPTER_IFACE, "DiscoverableTimeout", dbus.UInt32(self.discoverTimeout)
         )
         adapter.Set(ADAPTER_IFACE, "Discoverable", on)
         logging.debug(
             "Bluetooth is discoverable" if on else "Bluetooth is no longer discoverable"
         )
 
-    def sendCommand(self, command):
+    def send_command(self, command):
         commands = {
             "Play": self.player.Play(dbus_interface=PLAYER_IFACE),
             "Pause": self.player.Pause(dbus_interface=PLAYER_IFACE),
@@ -227,6 +314,16 @@ class BlueHandler(dbus.service.Object):
         self.trustDevice(device)
         return "0000"
 
+    @dbus.service.method(AGENT_IFACE, in_signature="ouq", out_signature="")
+    def DisplayPasskey(self, device, passkey, entered):
+        print(f"DisplayPasskey ({device}, {passkey} entered {entered})")
+        self.trustDevice(device)
+
+    @dbus.service.method(AGENT_IFACE, in_signature="os", out_signature="")
+    def DisplayPinCode(self, device, pincode):
+        print(f"DisplayPinCode ({device}, {pincode})")
+        self.trustDevice(device)
+
     @dbus.service.method(AGENT_IFACE, in_signature="ou", out_signature="")
     def RequestConfirmation(self, device, passkey):
         """Always confirm"""
@@ -237,6 +334,7 @@ class BlueHandler(dbus.service.Object):
     def AuthorizeService(self, device, uuid):
         """Always authorize"""
         logging.debug("Authorize service returns")
+        self.trustDevice(device)
 
     def trustDevice(self, path):
         """Set the device to trusted"""

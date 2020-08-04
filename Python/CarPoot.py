@@ -29,6 +29,7 @@ import dbus
 import dbus.service
 import dbus.mainloop.glib
 import signal
+from functools import partial
 
 import logging
 import traceback
@@ -37,11 +38,12 @@ import asyncio
 import asyncio_glib
 
 from BlueHandler import BlueHandler
-from playerio import PlayerIO, MultiplexInput, SleepyPi
+from PlayerIO import PlayerIO, MultiplexInput, SleepyPi
+from PlayerDisplay import PlayerDisplay
 
 # Multiplexer pins
-multiInPins = [24, 25, 7]
-multiOutPins = [17, 27]
+multiInPins = [24, 25, 7]  # 1,4,band; 2,5,-; 3,6,+
+multiOutPins = [17, 27]  # 4,5,6; 1,2,3; (B,-,+ hardwired)
 
 inPins = [18, 23]  # And 23
 outPins = [21]
@@ -70,7 +72,7 @@ class MediaPlayer(dbus.service.Object):
     outPins = []
     multiplexers = []
 
-    lcd = None
+    display = None
     adapter = None
     device = None
     deviceAlias = None
@@ -92,9 +94,12 @@ class MediaPlayer(dbus.service.Object):
         dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
         bus = dbus.SystemBus()
 
-        self.blueHandler = BlueHandler(bus, self, "NoInputNoOutput")
+        self.blueHandler = BlueHandler(
+            bus, self.mainLoop, self.player_handler, "DisplayYesNo"
+        )
         self.playerio = PlayerIO(self, inPins, [None, None], outPins, [0])
         self.arduino = SleepyPi()
+        self.display = PlayerDisplay()
 
         # Add signal handler to exit on keyoard press
         for signame in ("SIGINT", "SIGTERM"):
@@ -119,10 +124,34 @@ class MediaPlayer(dbus.service.Object):
         self.mainLoop.create_task(self.arduino.setup())
         self.mainLoop.run_forever()
 
-    def playerHandler(self, interface, changed, invalidated, path):
+    def player_handler(self, stateName, value):
         """Handle relevant property change signals"""
+        logging.debug(f"{stateName}: {value}")
+        if stateName == "Connected":
+            if value[0] == True:
+                self.display.println(f"Connected to {value[1]}")
+            else:
+                self.display.println(f"Disconnected from {value[1]}")
+        if stateName == "State":
+            return
+        if stateName == "Track":
+            return
+        if stateName == "Status":
+            return
+        if stateName == "Discoverable":
+            self.display.clear_display()
+            if value == True:
+                self.display.println("Pairing mode on: ???s")
+            else:
+                self.display.println("Pairing mode off.")
+        if stateName == "Alias":
+            self.display.clear_display()
+            if value == True:
+                self.display.println("Pairing mode on: ???s")
+            else:
+                self.display.println("Pairing mode off.")
 
-    def updateDisplay(self):
+    def update_display(self):
         """Display the current status of the device on the LCD"""
         logging.debug(
             f"Updating display for connected: [{self.connected}]; "
@@ -140,20 +169,20 @@ class MediaPlayer(dbus.service.Object):
                 else:
                     self.wake()
                     if self.status == "paused":
-                        self.showPaused()
+                        self.show_paused()
                     else:
-                        self.showTrack()
+                        self.show_track()
             else:
                 self.sleep()
 
-    def showDevice(self):
+    def show_device(self):
         """Display the device connection info on the LCD"""
         self.lcd.clear()
         self.lcd.writeLn("Connected to:", 0)
         self.lcd.writeLn(self.deviceAlias, 1)
         time.sleep(2)
 
-    def showTrack(self):
+    def show_track(self):
         """Display track info on the LCD"""
         lines = []
         if "Artist" in self.track:
@@ -171,18 +200,25 @@ class MediaPlayer(dbus.service.Object):
 
     def band_but(self):
         """ """
+        logging.info("Band button pressed")
 
     def seek_but(self, direction):
         """ """
+        logging.info(f"Seek {direction} button pressed")
 
     def num_but(self, number):
         """ """
+        logging.info(f"Number {number} button pressed")
+        if number == 6:
+            logging.info("6")
+            self.blueHandler.set_discoverable()
 
-    def shutdown(self, sigName):
+    async def shutdown(self, sigName):
         logging.info(f"Shutting down MediaPlayer. {sigName} was signalled")
         # self.lcd.end()
+
         self.mainLoop.stop()
-        self.mainLoop.close()
+        # self.mainLoop.close()
 
     async def getStatus(self):
         return self.status
@@ -213,26 +249,23 @@ retroPlayer = MediaPlayer(inPins, outPins)
 # ######### MULTIPLEXER #########
 # Nesting is output pin then input pin. Output "0" is hardwired to 3.3V
 multiFuncs = [
-    [retroPlayer.band_but, retroPlayer.seek_but("up"), retroPlayer.seek_but("down")],
-    [retroPlayer.num_but(1), retroPlayer.num_but(2), retroPlayer.num_but(3)],
-    [retroPlayer.num_but(4), retroPlayer.num_but(5), retroPlayer.num_but(6)],
+    [
+        retroPlayer.band_but,
+        partial(retroPlayer.seek_but, "down"),
+        partial(retroPlayer.seek_but, "up"),
+    ],
+    [
+        partial(retroPlayer.num_but, 4),
+        partial(retroPlayer.num_but, 5),
+        partial(retroPlayer.num_but, 6),
+    ],
+    [
+        partial(retroPlayer.num_but, 1),
+        partial(retroPlayer.num_but, 2),
+        partial(retroPlayer.num_but, 3),
+    ],
 ]
 retroPlayer.addMultiplexer(multiInPins, multiOutPins, multiFuncs)
 
-
-# def signal_handler(signal, frame):
-#     logging.info("MediaPlayer cancelled by user")
-#     retroPlayer.shutdown()
-# signal.signal(signal.SIGINT, signal_handler)
-
-
 logging.info("Starting RetroPlayer")
-try:
-    retroPlayer.start()
-except KeyboardInterrupt:
-    logging.info("MediaPlayer cancelled by user")
-except Exception as ex:
-    logging.error(f"How embarrassing. The following error occurred: {ex}")
-    traceback.print_exc()
-# finally:
-# retroPlayer.shutdown()
+retroPlayer.start()

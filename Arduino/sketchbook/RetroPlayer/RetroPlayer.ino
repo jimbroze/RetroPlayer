@@ -33,7 +33,7 @@ void wakeup_manual();
 void wakeup_auto();
 
 template <byte digitalIns, byte analogIns, byte digitalOuts>
-RetroPlayer<digitalIns, analogIns, digitalOuts>::RetroPlayer(SleepyPiClass *sleepyPi, SerialComms *comms) : myState{off}, handshakeState{none}, sleepyPi_{sleepyPi}, comms_{comms}, numDigIns{digitalIns}, numAnalIns{analogIns}, numDigOuts{digitalOuts}, digitalInStates{}, analogInStates{}, digitalOutStates{}
+RetroPlayer<digitalIns, analogIns, digitalOuts>::RetroPlayer(SleepyPiClass *sleepyPi, SerialComms *comms) : powerState{off}, handshakeState{none}, sleepyPi_{sleepyPi}, comms_{comms}, numDigIns{digitalIns}, numAnalIns{analogIns}, numDigOuts{digitalOuts}, digitalInStates{}, analogInStates{}, digitalOutStates{}
 {
 
     // Setup serial data references
@@ -62,6 +62,9 @@ RetroPlayer<digitalIns, analogIns, digitalOuts>::~RetroPlayer()
 template <byte digitalIns, byte analogIns, byte digitalOuts>
 void RetroPlayer<digitalIns, analogIns, digitalOuts>::handshake() {
     comms_->read_serial_data();
+    if (millis() < lastHandshakeTime) {
+        lastHandshakeTime = millis(); // Timer has wrapped around
+    }
     switch(handshakeState) {
         case none: // Send handshake
             if (piAwake == 1) {
@@ -71,11 +74,12 @@ void RetroPlayer<digitalIns, analogIns, digitalOuts>::handshake() {
                 lastHandshakeTime = millis();
                 handshakeState = sent;
             }
-            if ( (lastHandshakeTime + HANDSHAKE_TIMEOUT) > millis() ) {
+            if ( (lastHandshakeTime + HANDSHAKE_TIMEOUT) < millis() ) {
                 handshakeData = 3; // No Awake signal received.
                 comms_->sendData(&handshakeData);
                 lastHandshakeTime = millis();
             }
+            break;
         case sent: // Sent, wait for receive
             if (handshakeReceived == 1) {
                 handshakeData = 2; // Success
@@ -83,19 +87,21 @@ void RetroPlayer<digitalIns, analogIns, digitalOuts>::handshake() {
                 lastHandshakeTime = millis();
                 handshakeState = success;
             }
-            if ( (lastHandshakeTime + HANDSHAKE_TIMEOUT) > millis() ) {
+            if ( (lastHandshakeTime + HANDSHAKE_TIMEOUT) < millis() ) {
                 handshakeData = 4; // No Received signal received.
                 comms_->sendData(&handshakeData);
                 lastHandshakeTime = millis();
             }
+            break;
         case success:
             // Handshake confirmed. Check time since last message
-            if ( (lastHandshakeTime + HANDSHAKE_TIMEOUT) > millis() ) {
+            if ( (lastHandshakeTime + HANDSHAKE_TIMEOUT) < millis() ) {
                 handshakeReceived = 0;
                 handshakeData = 0; // Require new handshake
                 lastHandshakeTime = millis();
                 handshakeState = none;
             }
+            break;
     }
 }
 
@@ -120,7 +126,7 @@ void RetroPlayer<digitalIns, analogIns, digitalOuts>::setup()
 
 template <byte digitalIns, byte analogIns, byte digitalOuts>
 void RetroPlayer<digitalIns, analogIns, digitalOuts>::power_switch(byte level) {
-    volSwitch = level;
+    volSwitch = !level; // Switch is inverted
 }
 template <byte digitalIns, byte analogIns, byte digitalOuts>
 void RetroPlayer<digitalIns, analogIns, digitalOuts>::door_light(byte level) {
@@ -250,7 +256,7 @@ void RetroPlayer<digitalIns, analogIns, digitalOuts>::normal_mode() { // Setup a
     pinMode(ANALOGUE_SINK, OUTPUT);
     digitalWrite(ANALOGUE_SINK, LOW);
     mode = 0;
-    comms_->sendData(&display);
+    comms_->sendData(&mode);
 }
 template <byte digitalIns, byte analogIns, byte digitalOuts>
 void RetroPlayer<digitalIns, analogIns, digitalOuts>::shutdown_request(byte shutdownType = 2) {
@@ -277,17 +283,21 @@ void RetroPlayer<digitalIns, analogIns, digitalOuts>::power_control() {
     switch(powerState) { // State machine to control power up sequence
         case shuttingDown: // Shutting down
             //TODO Add timeout involving piAwake
-            piPower = sleepyPi_->checkPiStatus(false);  // Don't Cut Power automatically
+            piPower = sleepyPi_->checkPiStatus(90, false);  // 90mA threshold. Don't Cut Power automatically
             if (piPower == false) {
                 // TODO Clear serial buffer?
                 sleepyPi_->enablePiPower(false);
                 powerState = off;
             }
-            if ( (shutdownTime + SHUTDOWN_TIMEOUT) > millis() ) {
+            if ( (shutdownTime + SHUTDOWN_TIMEOUT) < millis() ) {
                 piOff = 4; // Shutdown not completed
                 comms_->sendData(&piOff);
+                shutdownTime = millis();
             }
+            break;
         case off: // Low power state
+            handshakeData = 7; // Temp DELETEME
+            comms_->sendData(&handshakeData);
             // Attach WAKEUP_PIN to wakeup ATMega
             attachInterrupt(digitalPinToInterrupt(DOOR_PIN), wakeup_auto, FALLING);
             attachInterrupt(digitalPinToInterrupt(POWER_SWITCH_PIN), wakeup_manual, FALLING);
@@ -302,14 +312,17 @@ void RetroPlayer<digitalIns, analogIns, digitalOuts>::power_control() {
             detachInterrupt(digitalPinToInterrupt(POWER_SWITCH_PIN));
             
             delay(DEBOUNCE); // Basic blocking debounce
+            volSwitch = !digitalRead(POWER_SWITCH_PIN); // Switch is inverted
             if (volSwitch == 0) { // If switch is off, go back to sleep.
                 display = 0;
                 break;
             }
 
             ardOnTime = millis(); // Record power on time
+            lastHandshakeTime = millis();
 
             wakeup(); // Wakeup pi and Set next state based on inputs
+            break;
         case lowPower: // Arduino on but pi off. Currently unused
             break;
         case dispOff: // Woken up, no display
@@ -319,9 +332,10 @@ void RetroPlayer<digitalIns, analogIns, digitalOuts>::power_control() {
                 break;
             }
             // If display is off and timeout has passed, shutdown
-            if ((ardOnTime + POWER_ON_TIMEOUT) > millis() ) {
-                shutdown(); // Shutdown Pi
+            if ((ardOnTime + POWER_ON_TIMEOUT) < millis() ) {
+                shutdown_request(2); // Shutdown Pi
             }
+            break;
         // *********** Regular auto on/off (Not using vol switch) ***********
         case dispOnAuto: // Woken up with ignition, display should be on
             if (ignition == 0 && intLights == 1) {
@@ -330,28 +344,32 @@ void RetroPlayer<digitalIns, analogIns, digitalOuts>::power_control() {
             if (volSwitch == 0) { 
                 shutdown_request(3); // Manual
             }
+            break;
         case shutdownTimeoutAuto: 
-            if ((shutdownTime + SHUTDOWN_REQ_TIMEOUT) > millis() ) {
+            if ((shutdownTime + SHUTDOWN_REQ_TIMEOUT) < millis() ) {
                 shutdown();
             }
             if (ignition == 1  || keepAlive == 1) {
                 wakeup(); //Cancel shutdown 
             }
+            break;
         // *********** Manual on/off (Using vol switch) ***********
         case dispOnManual: // Woken up but ignition is off (Using vol switch)
             if (volSwitch == 0) {
-                shutdown_request();
+                shutdown();
             }
             if (ignition == 1) {
                 powerState = dispOnAuto;
             }
+            break;
         case shutdownTimeoutManual: // Power switch turned off
-            if ((shutdownTime + SHUTDOWN_REQ_TIMEOUT) > millis() ) {
+            if ((shutdownTime + SHUTDOWN_REQ_TIMEOUT) < millis() ) {
                 shutdown();
             }
             if (volSwitch == 1 || keepAlive == 1) {
                 wakeup(); // Cancel shutdown 
             }
+            break;
     }
 }
 

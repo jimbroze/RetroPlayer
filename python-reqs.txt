@@ -1,3 +1,0 @@
-adafruit-circuitpython-ssd1305
-adafruit-blinka
-pyserial-asyncio

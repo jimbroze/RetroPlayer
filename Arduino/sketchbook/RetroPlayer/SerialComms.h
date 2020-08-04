@@ -216,7 +216,8 @@ void SerialComms::process_serial_data(char serialData[]) {
     DeserializationError error = deserializeJson(doc, serialData);
     if (error) {
         // send_serial("errSer", error.c_str());
-        Serial.println(error.c_str());
+        // Serial.println(error.c_str());
+        // Serial.flush();
         return;
     }
     // Get a reference to the root object
@@ -295,7 +296,7 @@ void SerialComms::sendData() // Dict
 
     // Produce a minified JSON document
     serializeJson(fullDoc, Serial);
-    Serial.println();
+    Serial.flush();
 }
 
 template <class T>
@@ -328,7 +329,7 @@ void SerialData<T>::send()
 
     // Send JSON to serial
     serializeJson(doc, Serial);
-    Serial.println();
+    Serial.flush();
 }    
 
 template <class T, byte arrLength>
@@ -343,8 +344,7 @@ void SerialData<T[arrLength]>::send()
     }
 
     serializeJson(doc, Serial);
-    Serial.println();
-    
+    Serial.flush();
 }
 
 template <class T>
