@@ -179,9 +179,14 @@ class MultiplexInput:
 class SleepyPi:
     """ """
 
+    serialOutData = {}
+
     # Serial port is swapped when not using onboard bluetooth
-    def __init__(self, url="/dev/ttyAMA0"):
+    def __init__(self, serialObj, serialMappingIn, serialDataOut, url="/dev/ttyAMA0"):
         self.url = url
+        self.serialMappingIn = serialMappingIn
+        self.serialObj = serialObj
+        self.serialOutData = serialDataOut
 
     async def setup(self):
         self.reader, self.writer = await serial_asyncio.open_serial_connection(
@@ -189,6 +194,7 @@ class SleepyPi:
         )
         logging.info("Setting up Arduino communications.")
 
+        await self.send({"awake": 1})
         await self.receive()
 
     async def send(self, data):
@@ -199,6 +205,9 @@ class SleepyPi:
         # Signal end of message
         self.writer.write(b"\n")
 
+    def send_all(self):
+        asyncio.create_task(self.send(self.serialOutdata))
+
     async def receive(self):
         while True:
             # Give control to event loop until data is received
@@ -207,3 +216,13 @@ class SleepyPi:
             # msg = await self.reader.readline()
             data = json.loads(msg.decode("utf-8"))
             logging.debug(f"received: {data}")
+            if len(data) > 1:
+                # Pass data to RetroPlayer
+                self.serialObj = data
+            elif len(data) == 1:
+                # call a specific function
+                self.serialMappingIn.get(next(iter(data)), lambda: "Invalid")(
+                    data[next(iter(data))]
+                )
+            else:
+                logging.error(f"Invalid serial data received: {data}")

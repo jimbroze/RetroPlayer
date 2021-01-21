@@ -71,6 +71,15 @@ class MediaPlayer(dbus.service.Object):
     inPins = []
     outPins = []
     multiplexers = []
+    serialData = {}  # Dict/obj which holds all arduino serial data
+    serialMappingIn = {
+        # "dig": self.digital_change,
+        # "analog": self.analog_change,
+        # "disp": self.display_change,
+        # "off": self.off_change,
+        # "mode": self.mode_change,
+        # "hand": self.handshake_change,
+    }
 
     display = None
     adapter = None
@@ -85,6 +94,14 @@ class MediaPlayer(dbus.service.Object):
     track = None
 
     def __init__(self, inPins, outPins):
+        self.serialMappingIn = {
+            "dig": self.digital_change,
+            "analog": self.analog_change,
+            "disp": self.display_change,
+            "off": self.off_change,
+            "mode": self.mode_change,
+            "hand": self.handshake_change,
+        }
         self.inPins = inPins
         self.outPins = outPins
 
@@ -98,8 +115,13 @@ class MediaPlayer(dbus.service.Object):
             bus, self.mainLoop, self.player_handler, "DisplayYesNo"
         )
         self.playerio = PlayerIO(self, inPins, [None, None], outPins, [0])
-        self.arduino = SleepyPi()
-        self.display = PlayerDisplay()
+        self.arduino = SleepyPi(
+            self.serialData,
+            self.serialMappingIn,
+            serialDataOut={"out": [0, 0, 0], "awake": 1, "hand": 1, "alive": 0},
+        )
+        self.display = PlayerDisplay(self.mainLoop)
+        self.mainLoop.create_task(self.display.welcome())
 
         # Add signal handler to exit on keyoard press
         for signame in ("SIGINT", "SIGTERM"):
@@ -128,28 +150,23 @@ class MediaPlayer(dbus.service.Object):
         """Handle relevant property change signals"""
         logging.debug(f"{stateName}: {value}")
         if stateName == "Connected":
-            if value[0] == True:
-                self.display.println(f"Connected to {value[1]}")
-            else:
-                self.display.println(f"Disconnected from {value[1]}")
+            prefix = "Connected to " if value[0] is True else "Disconnected from "
+            self.mainLoop.create_task(self.display.flash_message(prefix + value[1]))
+
         if stateName == "State":
             return
         if stateName == "Track":
-            return
+            self.mainLoop.create_task(self.display.update_track(value))
         if stateName == "Status":
-            return
+            if value == "paused":
+                self.display.clear_track()
         if stateName == "Discoverable":
-            self.display.clear_display()
-            if value == True:
-                self.display.println("Pairing mode on: ???s")
-            else:
-                self.display.println("Pairing mode off.")
+            suffix = "on: ???s." if value is True else "off."
+            self.display.flash_message("Pairing mode " + suffix)
+            return
         if stateName == "Alias":
-            self.display.clear_display()
-            if value == True:
-                self.display.println("Pairing mode on: ???s")
-            else:
-                self.display.println("Pairing mode off.")
+            suffix = "True." if value is True else "False"
+            self.display.flash_message("Alias " + suffix)
 
     def update_display(self):
         """Display the current status of the device on the LCD"""
@@ -223,9 +240,47 @@ class MediaPlayer(dbus.service.Object):
     async def getStatus(self):
         return self.status
 
+    def digital_change(self, val):
+        """ """
+
+    def analog_change(self, val):
+        """ """
+
+    def display_change(self, val):
+        """ """
+
+    def off_change(self, val):
+        """ """
+
+    def mode_change(self, val):
+        """ """
+
+    def handshake_change(self, val):
+        logging.debug(f"Handshake value of {val} received.")
+        if val == 1:  # 1 = sending/sent
+            # Send raspi side of full handshake
+            # self.arduino.send_all()
+            return
+        if val == 2:  # 2 = Success/received
+            return
+        if val == 3:  # 3 = No awake signal received
+            # Send awake signal
+            asyncio.create_task(
+                self.arduino.send({"awake": 1})
+            )  # Latest way to create coroutine task (3.7+)
+            return
+        if val == 4:  # 4 = No received signal received
+            # Send raspi side of full handshake
+            self.arduino.send_all()
+            return
+
+    def send_outputs(self, outputs):
+        """ """
+
 
 def nav_handler(buttons):
     logging.debug("Handling navigation for [{}]".format(buttons))
+
     """Handle the navigation buttons"""
     if buttons == Lcd.BUTTON_SELECT:
         player.startPairing()
