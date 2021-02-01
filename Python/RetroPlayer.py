@@ -162,11 +162,13 @@ class MediaPlayer(dbus.service.Object):
                 self.display.clear_track()
         if stateName == "Discoverable":
             suffix = "on: ???s." if value is True else "off."
-            self.display.flash_message("Pairing mode " + suffix)
+            self.mainLoop.create_task(
+                self.display.flash_message("Pairing mode " + suffix)
+            )
             return
         if stateName == "Alias":
             suffix = "True." if value is True else "False"
-            self.display.flash_message("Alias " + suffix)
+            self.mainLoop.create_task(self.display.flash_message("Alias " + suffix))
 
     def update_display(self):
         """Display the current status of the device on the LCD"""

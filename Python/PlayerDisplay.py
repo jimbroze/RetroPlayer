@@ -7,6 +7,10 @@ import adafruit_ssd1305
 import random
 import asyncio
 
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
+
 
 class LCDDisplay(adafruit_ssd1305.SSD1305_SPI):
     """OLED display driver"""
@@ -61,10 +65,6 @@ class LCDDisplay(adafruit_ssd1305.SSD1305_SPI):
 class DisplayZone(LCDDisplay):
     """An area of the display which can be independently updated"""
 
-    priority = 0
-    iD = 0
-    children = []
-
     def __init__(self, display, x, y, width, height, parents=None):
         self.display = display
         self.x = x
@@ -72,12 +72,24 @@ class DisplayZone(LCDDisplay):
         self.width = width
         self.height = height
         self.startPixel = (x, y)
-        for parent in parents:
-            self.parents.append(parent)
-            parent.children.append(self)
-            for grandParent in parent.parents:
-                self.parents.append(grandParent)
-                grandParent.children.append(self)
+        self.priority = 0
+        self.iD = 0
+        self.children = []
+        self.parents = []
+        if parents is not None:
+            for parent in parents:
+                self.parents.append(parent)
+                logging.debug(1)
+                parent.add_child(self)
+
+    def add_child(self, child):
+        self.children.append(child)
+        if self.parents:
+            for parent in self.parents:
+                # logging.debug(2)
+                parent.add_child(child)
+
+    # fixme -------------------------------- don't rewrite funcs. Use display class
 
     def clear_display(self):
         self.priority = 0
@@ -90,13 +102,35 @@ class DisplayZone(LCDDisplay):
         )
         self.display.show()
 
+    def update_display(self):
+        self.display.image(self.display.displayImg)
+        self.show()
+
+    def println(self, text, textWidth=None, textHeight=None):
+        """Standard text display. Local function?????"""
+
+        # Load default font.
+        font = ImageFont.load_default()
+
+        self.clear_display()
+
+        # Draw Some Text
+        (font_width, font_height) = font.getsize(text)
+        self.display.draw.text(
+            (self.width // 2 - font_width // 2, self.height // 2 - font_height // 2,),
+            text,
+            font=font,
+            fill=255,
+        )
+        self.update_display()
+
     def print_time(self, trackLength):
         # Load default font.
         font = ImageFont.load_default()
 
         # Draw Some Text
         (font_width, font_height) = font.getsize(trackLength)
-        self.draw.text(
+        self.display.draw.text(
             (
                 self.width // 2 - font_width // 2,
                 self.mainWindowHeight // 2 - font_height // 2,
@@ -128,7 +162,13 @@ trackTimeNumberWidth = 32
 class PlayerDisplay:
     """ """
 
-    welcomeMessage = ["Howdy Jim", "Hey Jim", "Hello Jim", "Welcome Jim"]
+    driver = "Driver"
+    welcomeMessage = [
+        "Howdy " + driver,
+        "Hey " + driver,
+        "Hello " + driver,
+        "Welcome " + driver,
+    ]
 
     display = LCDDisplay(displayPins, displayWidth, displayHeight)
     img = display.displayImg
@@ -204,10 +244,10 @@ class PlayerDisplay:
                 for childZone in zone.children
                 if childZone.priority != 0
             ]
-            + zone.priority
+            + [zone.priority]
         )
         while minPriority <= priority:
-            asyncio.sleep(0.5)
+            await asyncio.sleep(0.5)
             attempts += 1
             if attempts >= numAttempts:
                 return False
@@ -218,16 +258,19 @@ class PlayerDisplay:
 
     async def welcome(self):
         # Show welcome message
-        self.flash_message(random.choice(self.welcomeMessage), zone=self.wholeDisplay)
+        await self.flash_message(
+            random.choice(self.welcomeMessage), zone=self.wholeDisplay
+        )
 
     async def flash_message(self, text, priority=2, time=3, zone=None):
         """Display a message on the main display zone for a limited time"""
         if zone is None:
             zone = self.mainZone
-        if self.check_priority(text, zone, priority) is False:
-            return
+            # fixme
+        # if await self.check_priority(text, zone, priority) is False:
+        #     return
         zone.println(text)
-        asyncio.sleep(time)
+        await asyncio.sleep(time)
         zone.clear_display()
 
     def set_bluetooth(self, status):
@@ -241,7 +284,7 @@ class PlayerDisplay:
 
     async def update_track(self, track):
         """Show or update song information when playing"""
-        if self.check_priority("track", self.mainZone, 3, 1):
+        if await self.check_priority("track", self.mainZone, 3, 1):
             return
         # Artist and album on middle line
         middleLine = []
