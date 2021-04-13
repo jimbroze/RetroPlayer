@@ -84,6 +84,7 @@ class BlueHandler(dbus.service.Object):
     discoverable = None
     discoverTimeout = None
     track = None
+    position = None
     mainLoop = None
     connecting = False
     # connectingEvent = asyncio.Event()
@@ -271,6 +272,9 @@ class BlueHandler(dbus.service.Object):
         if "Status" in changed:
             self.status = changed["Status"]
             self.update_player("Status", self.status)
+        if "Position" in changed:
+            self.position = changed["Position"]
+            self.update_player("Position", self.position)
         if "Discoverable" in changed:
             self.discoverable = changed["Discoverable"]
             self.update_player("Discoverable", self.discoverable)

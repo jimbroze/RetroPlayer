@@ -9,7 +9,7 @@ import asyncio
 
 import logging
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 
 class LCDDisplay(adafruit_ssd1305.SSD1305_SPI):
@@ -47,10 +47,7 @@ class LCDDisplay(adafruit_ssd1305.SSD1305_SPI):
         # Draw Some Text
         (font_width, font_height) = font.getsize(text)
         self.draw.text(
-            (
-                self.width // 2 - font_width // 2,
-                self.mainWindowHeight // 2 - font_height // 2,
-            ),
+            (self.width // 2 - font_width // 2, self.height // 2 - font_height // 2,),
             text,
             font=font,
             fill=255,
@@ -89,9 +86,7 @@ class DisplayZone(LCDDisplay):
                 # logging.debug(2)
                 parent.add_child(child)
 
-    # fixme -------------------------------- don't rewrite funcs. Use display class
-
-    def clear_display(self):
+    def clear_display(self, update=True):
         self.priority = 0
         self.iD = None
         for childZone in self.children:
@@ -100,11 +95,11 @@ class DisplayZone(LCDDisplay):
         self.display.draw.rectangle(
             (self.x, self.y, self.width, self.height), outline=0, fill=0
         )
-        self.display.show()
+        if update:
+            self.update_display()
 
     def update_display(self):
-        self.display.image(self.display.displayImg)
-        self.show()
+        self.display.update_display()
 
     def println(self, text, textWidth=None, textHeight=None):
         """Standard text display. Local function?????"""
@@ -124,21 +119,19 @@ class DisplayZone(LCDDisplay):
         )
         self.update_display()
 
-    def print_time(self, trackLength):
-        # Load default font.
-        font = ImageFont.load_default()
+    def print_scroll(self, text, textWidth=None, textHeight=None):
+        """Scrolling text display."""
+        while True:  # change this?
+            self.clear_display(False)
+            # print text here
+            self.update_display()
 
-        # Draw Some Text
-        (font_width, font_height) = font.getsize(trackLength)
-        self.display.draw.text(
-            (
-                self.width // 2 - font_width // 2,
-                self.mainWindowHeight // 2 - font_height // 2,
-            ),
-            trackLength,
-            font=font,
-            fill=255,
-        )
+    def print_time(self, timeSeconds):
+        m, s = divmod(timeSeconds, 60)
+        h, m = divmod(m, 60)
+        timeText = f"{h:d}:{m:02d}:{s:02d}"
+
+        self.println(timeText)
 
 
 displayPins = {
@@ -154,7 +147,7 @@ fontScale = 1
 topBarHeight = 9
 bluetoothWidth = 6
 cornerWidth = 25
-mainTopHeight = 11
+mainTopHeight = 41
 trackTimeBorder = 1
 trackTimeNumberWidth = 32
 
@@ -237,6 +230,7 @@ class PlayerDisplay:
 
     async def check_priority(self, iD, zone, priority, numAttempts=6):
         """Check if a higher priority function is being shown on the display"""
+        logging.info(f"checking priority")
         attempts = 0
         minPriority = min(
             [
@@ -248,6 +242,7 @@ class PlayerDisplay:
         )
         while minPriority <= priority:
             await asyncio.sleep(0.5)
+            logging.info(f"priority attempt: {attempts}")
             attempts += 1
             if attempts >= numAttempts:
                 return False
@@ -266,7 +261,7 @@ class PlayerDisplay:
         """Display a message on the main display zone for a limited time"""
         if zone is None:
             zone = self.mainZone
-            # fixme
+            # FIXME
         # if await self.check_priority(text, zone, priority) is False:
         #     return
         zone.println(text)
@@ -284,6 +279,7 @@ class PlayerDisplay:
 
     async def update_track(self, track):
         """Show or update song information when playing"""
+        logging.info(f"updating track info")
         if await self.check_priority("track", self.mainZone, 3, 1):
             return
         # Artist and album on middle line
@@ -294,57 +290,58 @@ class PlayerDisplay:
                 middleLine.append(" - " + track["Album"])
         elif "Album" in track:
             middleLine.append("Album: " + track["Album"])
-        self.mainTop.println(middleLine)
-        if self.track["Title"]:
+        logging.info(f"{''.join(middleLine)}")
+        self.mainTop.println("".join(middleLine))
+        if "Title" in track:
             # Track name on top line
             self.topCenter.println(track["Title"])
 
-            trackLength = 0
-            trackProgress = 0
-            self.trackTimeLeft.print_time(trackProgress)
-            self.trackTimeRight.print_time(trackLength)
-            lineLength = self.trackTimeCenter.width - 2
-            progressLength = trackProgress / trackLength * lineLength
-            # Left bar end
-            self.display.draw.line(
-                (
-                    self.trackTimeCenter.x + 1,
-                    self.trackTimeCenter.y + self.trackTimeCenter.height / 2,
-                    1,
-                    5,
-                ),
-                fill=255,
-            )
-            # Left half of progress bar
-            self.display.draw.line(
-                (
-                    self.trackTimeCenter.x + 1,
-                    self.trackTimeCenter.y + self.trackTimeCenter.height / 2,
-                    progressLength,
-                    3,
-                ),
-                fill=255,
-            )
-            # Right half of progress bar
-            self.display.draw.line(
-                (
-                    self.trackTimeCenter.x + 1 + progressLength,
-                    self.trackTimeCenter.y + self.trackTimeCenter.height / 2,
-                    lineLength - progressLength,
-                    1,
-                ),
-                fill=255,
-            )
-            # Right bar end
-            self.display.draw.line(
-                (
-                    self.trackTimeCenter.x + lineLength,
-                    self.trackTimeCenter.y + self.trackTimeCenter.height / 2,
-                    1,
-                    5,
-                ),
-                fill=255,
-            )
+            # trackLength = 90000
+            # trackProgress = 40000
+            # self.trackTimeLeft.print_time(trackProgress)
+            # self.trackTimeRight.print_time(trackLength)
+            # lineLength = self.trackTimeCenter.width - 2
+            # progressLength = trackProgress / trackLength * lineLength
+            # # Left bar end
+            # self.display.draw.line(
+            #     (
+            #         self.trackTimeCenter.x + 1,
+            #         self.trackTimeCenter.y + self.trackTimeCenter.height / 2,
+            #         1,
+            #         5,
+            #     ),
+            #     fill=255,
+            # )
+            # # Left half of progress bar
+            # self.display.draw.line(
+            #     (
+            #         self.trackTimeCenter.x + 1,
+            #         self.trackTimeCenter.y + self.trackTimeCenter.height / 2,
+            #         progressLength,
+            #         3,
+            #     ),
+            #     fill=255,
+            # )
+            # # Right half of progress bar
+            # self.display.draw.line(
+            #     (
+            #         self.trackTimeCenter.x + 1 + progressLength,
+            #         self.trackTimeCenter.y + self.trackTimeCenter.height / 2,
+            #         lineLength - progressLength,
+            #         1,
+            #     ),
+            #     fill=255,
+            # )
+            # # Right bar end
+            # self.display.draw.line(
+            #     (
+            #         self.trackTimeCenter.x + lineLength,
+            #         self.trackTimeCenter.y + self.trackTimeCenter.height / 2,
+            #         1,
+            #         5,
+            #     ),
+            #     fill=255,
+            # )
 
     def clear_track(self):
         if self.mainZone.iD == "track":

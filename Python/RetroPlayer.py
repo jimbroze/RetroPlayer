@@ -55,10 +55,11 @@ DEVICE_IFACE = SERVICE_NAME + ".Device1"
 PLAYER_IFACE = SERVICE_NAME + ".MediaPlayer1"
 TRANSPORT_IFACE = SERVICE_NAME + ".MediaTransport1"
 
-# LOG_LEVEL = logging.INFO
-LOG_LEVEL = logging.DEBUG
+LOG_LEVEL = logging.INFO
+# LOG_LEVEL = logging.DEBUG
 LOG_FILE = None
 LOG_FORMAT = "%(asctime)s %(levelname)s %(message)s"
+logging.basicConfig(level=LOG_LEVEL)
 
 
 class MediaPlayer(dbus.service.Object):
@@ -91,7 +92,7 @@ class MediaPlayer(dbus.service.Object):
     state = None
     status = None
     discoverable = None
-    track = None
+    track = {}
 
     def __init__(self, inPins, outPins):
         self.serialMappingIn = {
@@ -148,15 +149,23 @@ class MediaPlayer(dbus.service.Object):
 
     def player_handler(self, stateName, value):
         """Handle relevant property change signals"""
-        logging.debug(f"{stateName}: {value}")
+        logging.info(f"{stateName}: {value}")
         if stateName == "Connected":
             prefix = "Connected to " if value[0] is True else "Disconnected from "
-            self.mainLoop.create_task(self.display.flash_message(prefix + value[1]))
+            self.mainLoop.create_task(
+                self.display.flash_message(prefix + value[1])
+            )  # FIXME
 
         if stateName == "State":
             return
         if stateName == "Track":
-            self.mainLoop.create_task(self.display.update_track(value))
+            for trackAttribute in value:
+                self.track[trackAttribute] = str(value[trackAttribute])
+            logging.info(self.track)
+            # self.mainLoop.create_task(self.display.update_track(self.track))
+            asyncio.run_coroutine_threadsafe(
+                self.display.update_track(self.track), self.mainLoop
+            )
         if stateName == "Status":
             if value == "paused":
                 self.display.clear_track()
