@@ -107,7 +107,7 @@ class DisplayZone(LCDDisplay):
         # Load default font.
         font = ImageFont.load_default()
 
-        self.clear_display()
+        self.clear_display(False)
 
         # Draw Some Text
         (font_width, font_height) = font.getsize(text)
@@ -119,12 +119,26 @@ class DisplayZone(LCDDisplay):
         )
         self.update_display()
 
-    def print_scroll(self, text, textWidth=None, textHeight=None):
+    async def print_scroll(self, text, textWidth=None, textHeight=None):
         """Scrolling text display."""
-        while True:  # change this?
-            self.clear_display(False)
-            # print text here
-            self.update_display()
+        # while True:  # change this?
+        self.clear_display(False)
+        # print text here
+        font = ImageFont.load_default()
+        # (font_width, font_height) = font.getsize(text)
+        logging.info(f"{self.x + self.width // 2}")
+        self.display.draw.text(
+            (
+                self.x + self.width // 2,
+                # self.x + 5,
+                self.y + self.height // 2,
+            ),
+            text,
+            font=font,
+            fill=255,
+            anchor="ms",
+        )
+        self.update_display()
 
     def print_time(self, timeSeconds):
         m, s = divmod(timeSeconds, 60)
@@ -147,7 +161,7 @@ fontScale = 1
 topBarHeight = 9
 bluetoothWidth = 6
 cornerWidth = 25
-mainTopHeight = 41
+mainTopHeight = 11
 trackTimeBorder = 1
 trackTimeNumberWidth = 32
 
@@ -181,7 +195,7 @@ class PlayerDisplay:
     topRight = DisplayZone(
         display, displayWidth - 25, 0, cornerWidth, topBarHeight, [wholeDisplay]
     )
-    mainZone = DisplayZone(
+    mainZone = DisplayZone(  # Everything except top bar
         display,
         0,
         topBarHeight,
@@ -291,10 +305,10 @@ class PlayerDisplay:
         elif "Album" in track:
             middleLine.append("Album: " + track["Album"])
         logging.info(f"{''.join(middleLine)}")
-        self.mainTop.println("".join(middleLine))
+        asyncio.create_task(self.mainTop.print_scroll("".join(middleLine)))
         if "Title" in track:
             # Track name on top line
-            self.topCenter.println(track["Title"])
+            asyncio.create_task(self.topCenter.print_scroll(track["Title"]))
 
             # trackLength = 90000
             # trackProgress = 40000
