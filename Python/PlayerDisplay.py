@@ -124,7 +124,8 @@ class DisplayZone(LCDDisplay):
         # while True:  # change this?
         self.clear_display(False)
         # print text here
-        font = ImageFont.load_default()
+        # font = ImageFont.load_default()
+        font = ImageFont.truetype("Fonts/VCR_OSD_MONO_1.001.ttf", 10)
         # (font_width, font_height) = font.getsize(text)
         logging.info(f"{self.x + self.width // 2}")
         self.display.draw.text(
