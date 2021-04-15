@@ -41,6 +41,7 @@ class LCDDisplay(adafruit_ssd1305.SSD1305_SPI):
 
         # Load default font.
         font = ImageFont.load_default()
+        # font = ImageFont.truetype("Fonts/Retro Gaming.ttf", 8)
 
         self.clear_display()
 
@@ -92,8 +93,11 @@ class DisplayZone(LCDDisplay):
         for childZone in self.children:
             childZone.priority = 0
             childZone.iD = None
+        logging.info(f"clearing {self.x, self.y, self.width, self.height}")
         self.display.draw.rectangle(
-            (self.x, self.y, self.width, self.height), outline=0, fill=0
+            (self.x, self.y, self.x + self.width, self.y + self.height),
+            outline=0,
+            fill=0,
         )
         if update:
             self.update_display()
@@ -106,6 +110,7 @@ class DisplayZone(LCDDisplay):
 
         # Load default font.
         font = ImageFont.load_default()
+        # font = ImageFont.truetype("Fonts/Retro Gaming.ttf", 8)
 
         self.clear_display(False)
 
@@ -124,15 +129,20 @@ class DisplayZone(LCDDisplay):
         # while True:  # change this?
         self.clear_display(False)
         # print text here
-        # font = ImageFont.load_default()
-        font = ImageFont.truetype("Fonts/VCR_OSD_MONO_1.001.ttf", 10)
-        # (font_width, font_height) = font.getsize(text)
-        logging.info(f"{self.x + self.width // 2}")
+        font = ImageFont.load_default()
+        # font = ImageFont.truetype("Fonts/Retro Gaming.ttf", 8)
+        (font_width, font_height) = font.getsize(text)
+        scrollText = text
+        while font_width >= self.width:
+            scrollText = scrollText[:-1]
+            (font_width, font_height) = font.getsize(scrollText)
+        scrollSize = len(scrollText)
+
         self.display.draw.text(
             (
-                self.x + self.width // 2,
+                self.x + (self.width // 2 - font_width // 2),
                 # self.x + 5,
-                self.y + self.height // 2,
+                self.y + (self.height // 2 - font_height // 2),
             ),
             text,
             font=font,
