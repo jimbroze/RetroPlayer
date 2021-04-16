@@ -72,6 +72,7 @@ class DisplayZone(LCDDisplay):
         self.startPixel = (x, y)
         self.priority = 0
         self.iD = 0
+        self.task = None
         self.children = []
         self.parents = []
         if parents is not None:
@@ -93,7 +94,6 @@ class DisplayZone(LCDDisplay):
         for childZone in self.children:
             childZone.priority = 0
             childZone.iD = None
-        logging.info(f"clearing {self.x, self.y, self.width, self.height}")
         self.display.draw.rectangle(
             (self.x, self.y, self.x + self.width, self.y + self.height),
             outline=0,
@@ -105,11 +105,10 @@ class DisplayZone(LCDDisplay):
     def update_display(self):
         self.display.update_display()
 
-    def println(self, text, textWidth=None, textHeight=None):
+    def println(self, text, font=ImageFont.load_default(), offset=0):
         """Standard text display. Local function?????"""
 
         # Load default font.
-        font = ImageFont.load_default()
         # font = ImageFont.truetype("Fonts/Retro Gaming.ttf", 8)
 
         self.clear_display(False)
@@ -117,30 +116,8 @@ class DisplayZone(LCDDisplay):
         # Draw Some Text
         (font_width, font_height) = font.getsize(text)
         self.display.draw.text(
-            (self.width // 2 - font_width // 2, self.height // 2 - font_height // 2,),
-            text,
-            font=font,
-            fill=255,
-        )
-        self.update_display()
-
-    async def print_scroll(self, text, textWidth=None, textHeight=None):
-        """Scrolling text display."""
-        # while True:  # change this?
-        self.clear_display(False)
-        # print text here
-        font = ImageFont.load_default()
-        # font = ImageFont.truetype("Fonts/Retro Gaming.ttf", 8)
-        (font_width, font_height) = font.getsize(text)
-        scrollText = text
-        while font_width >= self.width:
-            scrollText = scrollText[:-1]
-            (font_width, font_height) = font.getsize(scrollText)
-        scrollSize = len(scrollText)
-
-        self.display.draw.text(
             (
-                self.x + (self.width // 2 - font_width // 2),
+                self.x + (self.width // 2 - font_width // 2) + offset,
                 # self.x + 5,
                 self.y + (self.height // 2 - font_height // 2),
             ),
@@ -151,12 +128,52 @@ class DisplayZone(LCDDisplay):
         )
         self.update_display()
 
+    async def print_scroll(self, text, scrollSpeed=4, font=ImageFont.load_default()):
+        """Scrolling text display."""
+        buffer = 5
+
+        # print text here
+        # font = ImageFont.truetype("Fonts/Retro Gaming.ttf", 8)
+        (font_width, font_height) = font.getsize(text)
+        scrollText = text
+        while font_width >= self.width:
+            scrollText = scrollText[:-1]
+            (font_width, font_height) = font.getsize(scrollText)
+        scrollSize = len(scrollText)
+        noOfScrolls = len(text) - scrollSize + 1
+        doubleText = text + (" " * buffer) + text
+
+        while True:
+            for i in range(noOfScrolls + scrollSize + buffer):
+                scrollText = doubleText[i : (scrollSize + i)]
+                self.clear_display(False)
+                self.println(scrollText)
+                self.update_display()
+                await asyncio.sleep(1 / scrollSpeed)
+
     def print_time(self, timeSeconds):
         m, s = divmod(timeSeconds, 60)
         h, m = divmod(m, 60)
         timeText = f"{h:d}:{m:02d}:{s:02d}"
 
         self.println(timeText)
+
+    def print_text(self, text, font=ImageFont.load_default()):
+        self.cancel_task()
+        # font = ImageFont.truetype("Fonts/Retro Gaming.ttf", 8)
+        (font_width, font_height) = font.getsize(text)
+        if font_width > self.width:
+            self.task = asyncio.create_task(self.print_scroll(text, font=font))
+        else:
+            self.println(text, font=font)
+
+    def cancel_task(self):
+        try:
+            self.task.cancel()
+        except asyncio.CancelledError:
+            logging.debug(f"Cancel not worked")
+        except:
+            logging.info(f"Cancel not worked")
 
 
 displayPins = {
@@ -304,6 +321,7 @@ class PlayerDisplay:
 
     async def update_track(self, track):
         """Show or update song information when playing"""
+
         logging.info(f"updating track info")
         if await self.check_priority("track", self.mainZone, 3, 1):
             return
@@ -316,10 +334,11 @@ class PlayerDisplay:
         elif "Album" in track:
             middleLine.append("Album: " + track["Album"])
         logging.info(f"{''.join(middleLine)}")
-        asyncio.create_task(self.mainTop.print_scroll("".join(middleLine)))
+        self.mainTop.print_text("".join(middleLine))
         if "Title" in track:
             # Track name on top line
-            asyncio.create_task(self.topCenter.print_scroll(track["Title"]))
+            self.topCenter.print_text(track["Title"])
+            logging.info(f"{track['Title']}")
 
             # trackLength = 90000
             # trackProgress = 40000
