@@ -151,10 +151,14 @@ class DisplayZone(LCDDisplay):
                 self.update_display()
                 await asyncio.sleep(1 / scrollSpeed)
 
-    def print_time(self, timeSeconds):
-        m, s = divmod(timeSeconds, 60)
+    def print_time(self, timeMS, hours=False):
+        s, ms = divmod(timeMS, 1000)
+        m, s = divmod(s, 60)
         h, m = divmod(m, 60)
-        timeText = f"{h:d}:{m:02d}:{s:02d}"
+        if hours:
+            timeText = f"{h:d}:{m:02d}:{s:02d}"
+        else:
+            timeText = f"{m:02d}:{s:02d}"
 
         self.println(timeText)
 
@@ -173,7 +177,7 @@ class DisplayZone(LCDDisplay):
         except asyncio.CancelledError:
             logging.debug(f"Cancel not worked")
         except:
-            logging.info(f"Cancel not worked")
+            logging.debug(f"Cancel not worked")
 
 
 displayPins = {
@@ -188,10 +192,10 @@ fontScale = 1
 
 topBarHeight = 9
 bluetoothWidth = 6
-cornerWidth = 25
+cornerWidth = 20
 mainTopHeight = 11
 trackTimeBorder = 1
-trackTimeNumberWidth = 32
+trackTimeNumberWidth = 38
 
 
 class PlayerDisplay:
@@ -247,23 +251,23 @@ class PlayerDisplay:
         trackTimeBorder,
         topBarHeight + mainTopHeight,
         trackTimeNumberWidth,
-        displayHeight - mainTopHeight,
+        displayHeight - mainTopHeight - topBarHeight,
         [mainBottom],
     )
     trackTimeCenter = DisplayZone(
         display,
         trackTimeBorder + trackTimeNumberWidth,
-        topBarHeight + mainTopHeight,
+        trackTimeLeft.y,
         displayWidth - 2 * (trackTimeBorder + trackTimeNumberWidth),
-        displayHeight - mainTopHeight,
+        trackTimeLeft.height,
         [mainBottom],
     )
     trackTimeRight = DisplayZone(
         display,
         displayWidth - (2 * trackTimeBorder + trackTimeNumberWidth),
-        topBarHeight + mainTopHeight,
+        trackTimeLeft.y,
         trackTimeNumberWidth,
-        displayHeight - mainTopHeight,
+        trackTimeLeft.height,
         [mainBottom],
     )
 
@@ -272,7 +276,7 @@ class PlayerDisplay:
 
     async def check_priority(self, iD, zone, priority, numAttempts=6):
         """Check if a higher priority function is being shown on the display"""
-        logging.info(f"checking priority")
+        logging.debug(f"checking priority")
         attempts = 0
         minPriority = min(
             [
@@ -284,7 +288,7 @@ class PlayerDisplay:
         )
         while minPriority <= priority:
             await asyncio.sleep(0.5)
-            logging.info(f"priority attempt: {attempts}")
+            logging.debug(f"priority attempt: {attempts}")
             attempts += 1
             if attempts >= numAttempts:
                 return False
@@ -333,59 +337,58 @@ class PlayerDisplay:
                 middleLine.append(" - " + track["Album"])
         elif "Album" in track:
             middleLine.append("Album: " + track["Album"])
-        logging.info(f"{''.join(middleLine)}")
         self.mainTop.print_text("".join(middleLine))
         if "Title" in track:
             # Track name on top line
             self.topCenter.print_text(track["Title"])
-            logging.info(f"{track['Title']}")
 
-            # trackLength = 90000
-            # trackProgress = 40000
-            # self.trackTimeLeft.print_time(trackProgress)
-            # self.trackTimeRight.print_time(trackLength)
-            # lineLength = self.trackTimeCenter.width - 2
-            # progressLength = trackProgress / trackLength * lineLength
-            # # Left bar end
-            # self.display.draw.line(
-            #     (
-            #         self.trackTimeCenter.x + 1,
-            #         self.trackTimeCenter.y + self.trackTimeCenter.height / 2,
-            #         1,
-            #         5,
-            #     ),
-            #     fill=255,
-            # )
-            # # Left half of progress bar
-            # self.display.draw.line(
-            #     (
-            #         self.trackTimeCenter.x + 1,
-            #         self.trackTimeCenter.y + self.trackTimeCenter.height / 2,
-            #         progressLength,
-            #         3,
-            #     ),
-            #     fill=255,
-            # )
-            # # Right half of progress bar
-            # self.display.draw.line(
-            #     (
-            #         self.trackTimeCenter.x + 1 + progressLength,
-            #         self.trackTimeCenter.y + self.trackTimeCenter.height / 2,
-            #         lineLength - progressLength,
-            #         1,
-            #     ),
-            #     fill=255,
-            # )
-            # # Right bar end
-            # self.display.draw.line(
-            #     (
-            #         self.trackTimeCenter.x + lineLength,
-            #         self.trackTimeCenter.y + self.trackTimeCenter.height / 2,
-            #         1,
-            #         5,
-            #     ),
-            #     fill=255,
-            # )
+    async def update_position(self, trackProgress, trackLength):
+        """Show or update song information when playing"""
+        self.trackTimeLeft.print_time(trackProgress)
+        self.trackTimeRight.print_time(trackLength)
+        lineLength = self.trackTimeCenter.width - 2
+        progressLength = trackProgress / trackLength * lineLength
+        # Left bar end
+        self.display.draw.line(
+            (
+                self.trackTimeCenter.x,
+                self.trackTimeCenter.y + self.trackTimeCenter.height // 2 - 3,
+                self.trackTimeCenter.x,
+                self.trackTimeCenter.y + self.trackTimeCenter.height // 2 + 3,
+            ),
+            fill=255,
+        )
+        # Left half of progress bar
+        self.display.draw.line(
+            (
+                self.trackTimeCenter.x,
+                self.trackTimeCenter.y + self.trackTimeCenter.height // 2,
+                self.trackTimeCenter.x + progressLength,
+                self.trackTimeCenter.y + self.trackTimeCenter.height // 2,
+            ),
+            fill=255,
+            width=3,
+        )
+        # Right half of progress bar
+        self.display.draw.line(
+            (
+                self.trackTimeCenter.x + progressLength,
+                self.trackTimeCenter.y + self.trackTimeCenter.height // 2,
+                self.trackTimeCenter.x + self.trackTimeCenter.width,
+                self.trackTimeCenter.y + self.trackTimeCenter.height // 2,
+            ),
+            fill=255,
+        )
+        # Right bar end
+        self.display.draw.line(
+            (
+                self.trackTimeCenter.x + self.trackTimeCenter.width,
+                self.trackTimeCenter.y + self.trackTimeCenter.height // 2 - 3,
+                self.trackTimeCenter.x + self.trackTimeCenter.width,
+                self.trackTimeCenter.y + self.trackTimeCenter.height // 2 + 3,
+            ),
+            fill=255,
+        )
 
     def clear_track(self):
         if self.mainZone.iD == "track":

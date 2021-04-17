@@ -93,6 +93,7 @@ class MediaPlayer(dbus.service.Object):
     status = None
     discoverable = None
     track = {}
+    duration = 0
 
     def __init__(self, inPins, outPins):
         self.serialMappingIn = {
@@ -149,7 +150,7 @@ class MediaPlayer(dbus.service.Object):
 
     def player_handler(self, stateName, value):
         """Handle relevant property change signals"""
-        logging.info(f"{stateName}: {value}")
+        logging.debug(f"{stateName}: {value}")
         if stateName == "Connected":
             prefix = "Connected to " if value[0] is True else "Disconnected from "
             self.mainLoop.create_task(
@@ -160,12 +161,25 @@ class MediaPlayer(dbus.service.Object):
             return
         if stateName == "Track":
             for trackAttribute in value:
-                self.track[trackAttribute] = str(value[trackAttribute])
+                self.track[str(trackAttribute)] = str(value[trackAttribute])
+            if value["Duration"]:
+                self.duration = int(value["Duration"]) #TODO check if ints and str needed
+                logging.info(f"Duration = {self.duration}")
             logging.info(self.track)
             # self.mainLoop.create_task(self.display.update_track(self.track))
             asyncio.run_coroutine_threadsafe(
                 self.display.update_track(self.track), self.mainLoop
             )
+        if stateName == "Position":
+            self.position = int(value)
+            logging.info(f"Position = {self.position}")
+            # self.mainLoop.create_task(self.display.update_track(self.track))
+            if self.duration:
+                logging.info(f"Updating position")
+                asyncio.run_coroutine_threadsafe(
+                    self.display.update_position(self.position, self.duration),
+                    self.mainLoop,
+                )
         if stateName == "Status":
             if value == "paused":
                 self.display.clear_track()
