@@ -64,6 +64,35 @@ def find_adapter():
     raise Exception("Bluetooth adapter not found")
 
 
+def dbus_decode(data):
+    """
+        convert dbus data types to python native data types
+    """
+    if isinstance(data, dbus.String):
+        data = str(data)
+    elif isinstance(data, dbus.Boolean):
+        data = bool(data)
+    elif (
+        isinstance(data, dbus.UInt32)
+        or isinstance(data, dbus.UInt64)
+        or isinstance(data, dbus.UInt16)
+        or isinstance(data, dbus.Int32)
+        or isinstance(data, dbus.Int64)
+        or isinstance(data, dbus.UInt16)
+    ):
+        data = int(data)
+    elif isinstance(data, dbus.Double):
+        data = float(data)
+    elif isinstance(data, dbus.Array):
+        data = [dbus_decode(value) for value in data]
+    elif isinstance(data, dbus.Dictionary):
+        new_data = dict()
+        for key in data.keys():
+            new_data[dbus_decode(key)] = dbus_decode(data[key])
+        data = new_data
+    return data
+
+
 class BlueHandler(dbus.service.Object):
     """A class that handles media player bluetooth operations. Takes dbus object,
     media player object and bluetooth io capability as arguments."""
@@ -168,8 +197,10 @@ class BlueHandler(dbus.service.Object):
             )
             if "Status" in player_properties:
                 self.status = player_properties["Status"]
+                self.update_player("Status", dbus_decode(self.status))
             if "Track" in player_properties:
                 self.track = player_properties["Track"]
+                self.update_player("Track", dbus_decode(self.track))
         else:
             logging.debug("Could not find player")
             self.player = None
@@ -262,22 +293,24 @@ class BlueHandler(dbus.service.Object):
                     asyncio.ensure_future(self.connect_devices(), loop=self.mainLoop)
             if iface == "MediaControl1":
                 self.find_player()
-                self.update_player("Connected", [self.connected, self.deviceAlias])
+                self.update_player(
+                    "Connected", dbus_decode([self.connected, self.deviceAlias])
+                )
         if "State" in changed:
             self.state = changed["State"]
-            self.update_player("State", self.state)
+            self.update_player("State", dbus_decode(self.state))
         if "Track" in changed:
             self.track = changed["Track"]
-            self.update_player("Track", self.track)
+            self.update_player("Track", dbus_decode(self.track))
         if "Status" in changed:
             self.status = changed["Status"]
-            self.update_player("Status", self.status)
+            self.update_player("Status", dbus_decode(self.status))
         if "Position" in changed:
             self.position = changed["Position"]
-            self.update_player("Position", self.position)
+            self.update_player("Position", dbus_decode(self.position))
         if "Discoverable" in changed:
             self.discoverable = changed["Discoverable"]
-            self.update_player("Discoverable", self.discoverable)
+            self.update_player("Discoverable", dbus_decode(self.discoverable))
 
     def set_discoverable(self, on=True):
         """Make the adapter discoverable"""

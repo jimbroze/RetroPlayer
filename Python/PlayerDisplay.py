@@ -71,7 +71,7 @@ class DisplayZone(LCDDisplay):
         self.height = height
         self.startPixel = (x, y)
         self.priority = 0
-        self.iD = 0
+        self.iD = ""
         self.task = None
         self.children = []
         self.parents = []
@@ -88,12 +88,14 @@ class DisplayZone(LCDDisplay):
                 # logging.debug(2)
                 parent.add_child(child)
 
-    def clear_display(self, update=True):
-        self.priority = 0
-        self.iD = None
-        for childZone in self.children:
-            childZone.priority = 0
-            childZone.iD = None
+    def clear_display(self, update=True, wipeID=True):
+        if wipeID:
+            self.priority = 0
+            self.iD = None
+            for childZone in self.children:
+                childZone.priority = 0
+                childZone.iD = None
+            self.cancel_task()
         self.display.draw.rectangle(
             (self.x, self.y, self.x + self.width, self.y + self.height),
             outline=0,
@@ -105,13 +107,13 @@ class DisplayZone(LCDDisplay):
     def update_display(self):
         self.display.update_display()
 
-    def println(self, text, font=ImageFont.load_default(), offset=0):
+    def println(self, text, update=True, font=ImageFont.load_default(), offset=0):
         """Standard text display. Local function?????"""
 
         # Load default font.
         # font = ImageFont.truetype("Fonts/Retro Gaming.ttf", 8)
 
-        self.clear_display(False)
+        self.clear_display(update=False, wipeID=False)
 
         # Draw Some Text
         (font_width, font_height) = font.getsize(text)
@@ -126,9 +128,11 @@ class DisplayZone(LCDDisplay):
             fill=255,
             anchor="ms",
         )
-        self.update_display()
 
-    async def print_scroll(self, text, scrollSpeed=4, font=ImageFont.load_default()):
+        if update:
+            self.update_display()
+
+    async def print_scroll(self, text, font=ImageFont.load_default(), scrollSpeed=4):
         """Scrolling text display."""
         buffer = 5
 
@@ -146,12 +150,11 @@ class DisplayZone(LCDDisplay):
         while True:
             for i in range(noOfScrolls + scrollSize + buffer):
                 scrollText = doubleText[i : (scrollSize + i)]
-                self.clear_display(False)
-                self.println(scrollText)
+                self.println(scrollText, update=False)
                 self.update_display()
                 await asyncio.sleep(1 / scrollSpeed)
 
-    def print_time(self, timeMS, hours=False):
+    def print_time(self, timeMS, update=True, hours=False):
         s, ms = divmod(timeMS, 1000)
         m, s = divmod(s, 60)
         h, m = divmod(m, 60)
@@ -160,7 +163,7 @@ class DisplayZone(LCDDisplay):
         else:
             timeText = f"{m:02d}:{s:02d}"
 
-        self.println(timeText)
+        self.println(timeText, update=update)
 
     def print_text(self, text, font=ImageFont.load_default()):
         self.cancel_task()
@@ -172,12 +175,13 @@ class DisplayZone(LCDDisplay):
             self.println(text, font=font)
 
     def cancel_task(self):
-        try:
-            self.task.cancel()
-        except asyncio.CancelledError:
-            logging.debug(f"Cancel not worked")
-        except:
-            logging.debug(f"Cancel not worked")
+        for zone in [self] + self.children:
+            try:
+                zone.task.cancel()
+            except asyncio.CancelledError:
+                logging.debug(f"Cancel not worked")
+            except:
+                logging.debug(f"Cancel not worked")
 
 
 displayPins = {
@@ -274,28 +278,35 @@ class PlayerDisplay:
     def __init__(self, loop):
         self.loop = loop
 
-    async def check_priority(self, iD, zone, priority, numAttempts=6):
+    async def check_priority(self, iD, zone, priority, timeToWait=3):
         """Check if a higher priority function is being shown on the display"""
-        logging.debug(f"checking priority")
-        attempts = 0
-        minPriority = min(
-            [
-                childZone.priority
-                for childZone in zone.children
-                if childZone.priority != 0
-            ]
-            + [zone.priority]
-        )
-        while minPriority <= priority:
-            await asyncio.sleep(0.5)
-            logging.debug(f"priority attempt: {attempts}")
-            attempts += 1
-            if attempts >= numAttempts:
-                return False
-        zone.clear_display()
+        logging.info(f"{zone.iD}, {iD}")
+
+        # TODO Need to check higher zones?
+        if zone.iD != iD:
+            attempts = 0
+            minPriority = min(
+                [
+                    childZone.priority
+                    for childZone in zone.children
+                    if childZone.priority != 0
+                ]
+                + [zone.priority]
+            )
+            logging.info(f"{minPriority}")
+            if minPriority != 0:
+                while minPriority < priority:
+                    await asyncio.sleep(0.5)
+                    logging.info(f"priority attempt: {attempts}")
+                    attempts += 1
+                    if attempts > timeToWait / 0.5:
+                        logging.info(f"Returning true")
+                        return True
+            zone.iD = iD
+        # zone.clear_display()  # TODO is this needed?
         zone.priority = priority
-        zone.iD = iD
-        return True
+        logging.info(f"Priority given to {zone.iD}")
+        return False
 
     async def welcome(self):
         # Show welcome message
@@ -325,9 +336,10 @@ class PlayerDisplay:
 
     async def update_track(self, track):
         """Show or update song information when playing"""
-
         logging.info(f"updating track info")
-        if await self.check_priority("track", self.mainZone, 3, 1):
+        task1 = asyncio.create_task(self.check_priority("track", self.topCenter, 3, 3))
+        task2 = asyncio.create_task(self.check_priority("track", self.mainZone, 3, 3))
+        if await task1 or await task2:
             return
         # Artist and album on middle line
         middleLine = []
@@ -344,10 +356,15 @@ class PlayerDisplay:
 
     async def update_position(self, trackProgress, trackLength):
         """Show or update song information when playing"""
-        self.trackTimeLeft.print_time(trackProgress)
-        self.trackTimeRight.print_time(trackLength)
+        if self.mainZone.iD != "track" or await self.check_priority(
+            "track", self.mainZone, 3, 0
+        ):
+            return
+        self.trackTimeLeft.print_time(trackProgress, update=False)
+        self.trackTimeRight.print_time(trackLength, update=False)
         lineLength = self.trackTimeCenter.width - 2
         progressLength = trackProgress / trackLength * lineLength
+        self.trackTimeCenter.clear_display(update=False, wipeID=False)
         # Left bar end
         self.display.draw.line(
             (
@@ -374,7 +391,7 @@ class PlayerDisplay:
             (
                 self.trackTimeCenter.x + progressLength,
                 self.trackTimeCenter.y + self.trackTimeCenter.height // 2,
-                self.trackTimeCenter.x + self.trackTimeCenter.width,
+                self.trackTimeCenter.x + lineLength,
                 self.trackTimeCenter.y + self.trackTimeCenter.height // 2,
             ),
             fill=255,
@@ -382,17 +399,20 @@ class PlayerDisplay:
         # Right bar end
         self.display.draw.line(
             (
-                self.trackTimeCenter.x + self.trackTimeCenter.width,
+                self.trackTimeCenter.x + lineLength,
                 self.trackTimeCenter.y + self.trackTimeCenter.height // 2 - 3,
-                self.trackTimeCenter.x + self.trackTimeCenter.width,
+                self.trackTimeCenter.x + lineLength,
                 self.trackTimeCenter.y + self.trackTimeCenter.height // 2 + 3,
             ),
             fill=255,
         )
+        self.display.update_display()
 
     def clear_track(self):
         if self.mainZone.iD == "track":
+            logging.info("Clearing track")
             self.mainZone.clear_display()
+            self.topCenter.clear_display()
 
 
 # oled = PlayerDisplay()

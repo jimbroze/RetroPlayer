@@ -123,7 +123,6 @@ class MediaPlayer(dbus.service.Object):
             serialDataOut={"out": [0, 0, 0], "awake": 1, "hand": 1, "alive": 0},
         )
         self.display = PlayerDisplay(self.mainLoop)
-        self.mainLoop.create_task(self.display.welcome())
 
         # Add signal handler to exit on keyoard press
         for signame in ("SIGINT", "SIGTERM"):
@@ -146,11 +145,20 @@ class MediaPlayer(dbus.service.Object):
         for multiplexer in self.multiplexers:
             self.mainLoop.create_task(multiplexer.setup())
         self.mainLoop.create_task(self.arduino.setup())
+        self.mainLoop.create_task(self.intro())
         self.mainLoop.run_forever()
+
+    async def intro(self):
+        """Start the player by beginning GPIO and the gobject/asyncio mainloop()"""
+        await self.display.welcome()
+        logging.info("welcomed")
+        if self.track:
+            logging.info("track display")
+            await self.display.update_track(self.track)
 
     def player_handler(self, stateName, value):
         """Handle relevant property change signals"""
-        logging.debug(f"{stateName}: {value}")
+        logging.info(f"{stateName}: {value}")
         if stateName == "Connected":
             prefix = "Connected to " if value[0] is True else "Disconnected from "
             self.mainLoop.create_task(
@@ -161,28 +169,35 @@ class MediaPlayer(dbus.service.Object):
             return
         if stateName == "Track":
             for trackAttribute in value:
-                self.track[str(trackAttribute)] = str(value[trackAttribute])
+                # self.track[str(trackAttribute)] = str(
+                #     bytes(value[trackAttribute]), errors="ignore"
+                # )
+                self.track[trackAttribute] = value[trackAttribute]
             if value["Duration"]:
-                self.duration = int(value["Duration"]) #TODO check if ints and str needed
+                self.duration = int(
+                    value["Duration"]
+                )  # TODO check if ints and str needed
                 logging.info(f"Duration = {self.duration}")
             logging.info(self.track)
-            # self.mainLoop.create_task(self.display.update_track(self.track))
-            asyncio.run_coroutine_threadsafe(
-                self.display.update_track(self.track), self.mainLoop
-            )
+            if self.display:
+                # asyncio.run_coroutine_threadsafe(
+                #     self.display.update_track(self.track), self.mainLoop
+                # )
+                asyncio.create_task(self.display.update_track(self.track))
         if stateName == "Position":
             self.position = int(value)
-            logging.info(f"Position = {self.position}")
-            # self.mainLoop.create_task(self.display.update_track(self.track))
             if self.duration:
-                logging.info(f"Updating position")
-                asyncio.run_coroutine_threadsafe(
-                    self.display.update_position(self.position, self.duration),
-                    self.mainLoop,
-                )
+                if self.position > self.duration:
+                    logging.error("Track position exceeds total duration")
+                else:
+                    logging.info(f"Updating position")
+                    asyncio.create_task(
+                        self.display.update_position(self.position, self.duration)
+                    )
         if stateName == "Status":
             if value == "paused":
-                self.display.clear_track()
+                if self.display:
+                    self.display.clear_track()
         if stateName == "Discoverable":
             suffix = "on: ???s." if value is True else "off."
             self.mainLoop.create_task(
@@ -349,3 +364,4 @@ retroPlayer.addMultiplexer(multiInPins, multiOutPins, multiFuncs)
 
 logging.info("Starting RetroPlayer")
 retroPlayer.start()
+
